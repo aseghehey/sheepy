@@ -15,6 +15,8 @@ export function commandList(hosts, view) {
     { id: "close-session", title: "Close this session…", group: "Sessions", run: { kind: "event", name: "sheepy:close-session" } },
     { id: "close-group", title: "Close this session's group…", group: "Sessions", run: { kind: "event", name: "sheepy:close-group" } },
     { id: "logs", title: "Show logs", group: "Help", run: { kind: "logs" } },
+    { id: "reload", title: "Reload window", group: "Help", keys: "⌘R", run: { kind: "reload" } },
+    { id: "restart", title: "Restart Sheepy", group: "Help", run: { kind: "restart" } },
     { id: "zoom-in", title: "Zoom in", group: "View", keys: "⌘+", run: { kind: "view", change: { zoom: stepZoom(view?.zoom ?? 1, 1) } } },
     { id: "zoom-out", title: "Zoom out", group: "View", keys: "⌘−", run: { kind: "view", change: { zoom: stepZoom(view?.zoom ?? 1, -1) } } },
     { id: "zoom-reset", title: "Actual size", group: "View", keys: "⌘0", run: { kind: "view", change: { zoom: 1 } } },

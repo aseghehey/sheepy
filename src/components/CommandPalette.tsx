@@ -29,6 +29,8 @@ export function CommandPalette({ open, onClose, hosts, view, setView, onOpen, on
     else if (r.kind === "find") setTimeout(() => window.dispatchEvent(new KeyboardEvent("keydown", { key: "f", metaKey: true })), 0);
     else if (r.kind === "new-session") window.dispatchEvent(new Event("sheepy:new-session"));
     else if (r.kind === "event") window.dispatchEvent(new Event(r.name));
+    else if (r.kind === "reload") window.location.reload();
+    else if (r.kind === "restart") core.restart();
     else if (r.kind === "logs") core.logDir().then((d) => revealItemInDir(`${d}/Sheepy.log`)).catch(() => {});
   };
 

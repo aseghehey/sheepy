@@ -79,11 +79,46 @@ async fn terminal(address: String) -> Result<Value, String> {
     serde_json::from_str(out.stdout.trim()).map_err(|_| out.stderr.trim().to_string())
 }
 
-/// Types `text` into the agent's terminal and presses Enter.
+/// herdr-core's error in plain words: its JSON `{"error": {"message"}}`
+/// (on stdout or stderr), else the last line it printed.
+fn core_error(out: &hc::Out) -> String {
+    for text in [&out.stdout, &out.stderr] {
+        if let Ok(v) = serde_json::from_str::<Value>(text.trim()) {
+            if let Some(m) = v.pointer("/error/message").and_then(Value::as_str) {
+                return m.to_string();
+            }
+        }
+    }
+    out.stderr.trim().lines().last().or(out.stdout.trim().lines().last()).unwrap_or("herdr-core failed").to_string()
+}
+
+/// Types `text` into the agent's terminal and presses Enter. herdr-core
+/// refuses while the agent shows a question (typing would answer it);
+/// `force`: the window chose the answer to type into on purpose. A refusal
+/// comes back as "blocked: …".
 #[tauri::command]
-async fn send(address: String, text: String) -> Result<(), String> {
-    let out = hc::run(&["send", &address, &text]).await?;
-    if out.ok() { Ok(()) } else { Err(out.stderr.trim().to_string()) }
+async fn send(address: String, text: String, force: Option<bool>) -> Result<(), String> {
+    let mut args = vec!["send", address.as_str(), text.as_str()];
+    if force == Some(true) {
+        args.push("--force");
+    }
+    let out = hc::run(&args).await?;
+    if out.ok() {
+        return Ok(());
+    }
+    let blocked = serde_json::from_str::<Value>(out.stdout.trim()).ok()
+        .and_then(|v| v.pointer("/error/kind").and_then(Value::as_str).map(|k| k == "blocked"))
+        .unwrap_or(false);
+    let e = core_error(&out);
+    log::warn!("sending to {address} failed: {e}");
+    Err(if blocked { format!("blocked: {e}") } else { e })
+}
+
+/// Restarts the app (⌘K "Restart Sheepy").
+#[tauri::command]
+fn restart(app: AppHandle) {
+    log::info!("restarting");
+    app.restart();
 }
 
 /// Presses `keys` (enter, esc, up, down, ctrl+c…) in the agent's terminal.
@@ -388,7 +423,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             terminals, terminal, send, keys, interrupt, screen, locate, subagents, page, search, follow, unfollow,
             machines, machine_add, save_snapshot, resume, machine_stats, set_group, new_session, ssh_hosts,
-            close_session, log_dir
+            close_session, log_dir, restart
         ])
         .run(tauri::generate_context!())
         .expect("error while running Sheepy");
@@ -397,6 +432,14 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn core_errors_in_plain_words() {
+        let o = hc::Out { code: 1, stdout: r#"{"error":{"hint":"read its screen first","kind":"blocked","message":"t14 is blocked (question)"}}"#.into(), stderr: String::new() };
+        assert_eq!(core_error(&o), "t14 is blocked (question)");
+        let o = hc::Out { code: 1, stdout: String::new(), stderr: "first\nno such terminal".into() };
+        assert_eq!(core_error(&o), "no such terminal");
+    }
 
     fn out(stdout: &str) -> hc::Out {
         hc::Out { code: 0, stdout: stdout.into(), stderr: String::new() }

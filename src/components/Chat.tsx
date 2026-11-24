@@ -276,7 +276,7 @@ export function Chat({ target, terminal, onLog, onOpenSubagent, view, setView }:
           {status === "working" && <div className="activity"><span className="spinner" /> {activityOf(terminal) ?? "Working…"}</div>}
           {status === "blocked" && <QuestionCard address={target.address} transcript={transcript} version={version} />}
           <AnnotationTray {...notes} />
-          <Composer address={target.address} working={status === "working"} annos={notes.annos} onSentAnnos={notes.clear} />
+          <Composer address={target.address} working={status === "working"} blocked={status === "blocked"} annos={notes.annos} onSentAnnos={notes.clear} />
         </>
       )}
       {isSub && <div className="readonly">A sub-agent's conversation, read-only.</div>}

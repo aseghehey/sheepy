@@ -38,7 +38,7 @@ export const machineOf = (address: string): string | null => (address.includes("
 export const core = {
   terminals: () => invoke<Facts>("terminals"),
   terminal: (address: string) => invoke<Terminal>("terminal", { address }),
-  send: (address: string, text: string) => invoke<void>("send", { address, text }),
+  send: (address: string, text: string, force = false) => invoke<void>("send", { address, text, force }),
   keys: (address: string, keys: string[]) => invoke<void>("keys", { address, keys }),
   interrupt: (address: string) => invoke<string>("interrupt", { address }),
   screen: (address: string, lines = 60) => invoke<string>("screen", { address, lines }),
@@ -60,6 +60,7 @@ export const core = {
   sshHosts: () => invoke<string[]>("ssh_hosts"),
   closeSession: (address: string) => invoke<void>("close_session", { address }),
   logDir: () => invoke<string>("log_dir"),
+  restart: () => invoke<void>("restart"),
   onTerminals: (fn: (f: Facts) => void): Promise<UnlistenFn> => listen<Facts>("terminals", (e) => fn(e.payload)),
   onLog: (fn: (e: LogEvent) => void): Promise<UnlistenFn> => listen<LogEvent>("log", (e) => fn(e.payload)),
 };

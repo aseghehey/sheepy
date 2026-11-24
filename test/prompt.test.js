@@ -68,3 +68,12 @@ test("terminal frames and checkboxes are cleaned off", () => {
   assert.equal(clean("a │ b"), "a b");
   assert.equal(reflow(["one", "two", "", "three"]), "one two\n\nthree");
 });
+
+import { freeTextOption } from "../src/lib/prompt.js";
+
+test("the option that takes the person's own words", () => {
+  assert.equal(freeTextOption(["Pin it", "Approve", "Wait", "Type something."]), 3);
+  assert.equal(freeTextOption(["Yes", "No", "Other"]), 2);
+  assert.equal(freeTextOption(["Yes", "No"]), -1);
+  assert.equal(freeTextOption(null), -1);
+});

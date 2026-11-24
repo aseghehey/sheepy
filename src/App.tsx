@@ -44,6 +44,7 @@ export default function App() {
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       if (e.metaKey && !e.shiftKey && e.key.toLowerCase() === "k") { e.preventDefault(); setSearch(null); setCommands((p) => !p); }
+      else if (e.metaKey && !e.shiftKey && e.key.toLowerCase() === "r") { e.preventDefault(); window.location.reload(); }
       else if (e.metaKey && e.shiftKey && e.key.toLowerCase() === "f") { e.preventDefault(); setCommands(false); setSearch((s) => (s ? null : "search")); }
     };
     window.addEventListener("keydown", key);

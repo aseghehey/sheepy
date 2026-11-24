@@ -76,3 +76,9 @@ export function choose(from, to) {
   const keys = Array(Math.abs(to - from)).fill(to > from ? "down" : "up");
   return [...keys, "enter"];
 }
+
+// The option of a question menu that takes the person's own words ("Type
+// something.", "Other", "Chat about this"), or -1.
+export function freeTextOption(options) {
+  return (options ?? []).findIndex((o) => /^(type something|other|chat about this|something else)\b/i.test(String(o).replace(/^\d+[.)]\s*/, "").trim()));
+}
