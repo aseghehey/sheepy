@@ -152,3 +152,14 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 
 .empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--dim); }
 .empty-title { font-size: 22px; font-weight: 600; color: var(--muted); }
+
+/* Machines */
+.machines { border-top: 1px solid var(--border); padding: 8px 8px 12px; font-size: 12.5px; }
+.machines-head { display: flex; justify-content: space-between; align-items: center; padding: 2px 8px 6px; color: var(--dim); font-weight: 600; font-size: 11.5px; }
+.link { color: var(--accent); font-weight: 500; }
+.machine { display: flex; align-items: center; gap: 8px; padding: 4px 8px; }
+.machine-add { display: flex; flex-direction: column; gap: 6px; padding: 6px 8px; }
+.machine-add input { font: inherit; padding: 6px 8px; border-radius: 7px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); }
+.machine-add button { align-self: flex-start; padding: 4px 12px; border-radius: 7px; background: var(--accent); color: white; }
+.machine-add button:disabled { opacity: 0.4; }
+.hint code { font: 11.5px ui-monospace, "SF Mono", Menlo, monospace; background: var(--code-bg); padding: 1px 4px; border-radius: 4px; }

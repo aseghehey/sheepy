@@ -17,6 +17,7 @@ export interface Terminal {
   records?: Record<string, { app?: string; state?: string; title?: string }>;
   parent?: string | null;
 }
+export interface Machine { name: string; state: string; host?: string; target?: string; version?: string }
 export interface Facts { terminals: Terminal[]; machines?: { name: string; state: string }[]; seq?: number }
 
 export interface LogLine { at: number; line: string }
@@ -48,6 +49,8 @@ export const core = {
   search: (machine: string | null, args: string[]) => invoke<any>("search", { machine, args }),
   follow: (id: string, machine: string | null, file: string) => invoke<void>("follow", { id, machine, file }),
   unfollow: (id: string) => invoke<void>("unfollow", { id }),
+  machines: () => invoke<{ machines: Machine[] }>("machines"),
+  machineAdd: (target: string, name?: string) => invoke<unknown>("machine_add", { target, name: name ?? null }),
   onTerminals: (fn: (f: Facts) => void): Promise<UnlistenFn> => listen<Facts>("terminals", (e) => fn(e.payload)),
   onLog: (fn: (e: LogEvent) => void): Promise<UnlistenFn> => listen<LogEvent>("log", (e) => fn(e.payload)),
 };

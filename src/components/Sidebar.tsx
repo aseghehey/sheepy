@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { core, machineOf } from "../lib/core";
 import { subagentRow } from "../lib/sessions.js";
+import { Machines } from "./Machines";
 
 export type Target =
   | { kind: "session"; address: string; title: string }
@@ -101,6 +102,7 @@ export function Sidebar({ windows, target, logs, onSelect, error, machines }: {
           );
         })}
       </div>
+      <Machines live={machines} />
     </aside>
   );
 }

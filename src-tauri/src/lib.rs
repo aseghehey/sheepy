@@ -112,6 +112,33 @@ fn unfollow(follows: State<'_, logs::Follows>, id: String) {
     logs::unfollow(&follows, &id);
 }
 
+/// The machines herdr-core reaches (with their state), as `machine ls --json`.
+#[tauri::command]
+async fn machines() -> Result<Value, String> {
+    let out = hc::run(&["machine", "ls", "--json"]).await?;
+    serde_json::from_str(out.stdout.trim()).map_err(|_| out.stderr.trim().to_string())
+}
+
+/// Adds a machine reached with ssh (`target`: a Host from ~/.ssh/config,
+/// `user@host`, `user@host:port`), installing herdr-core there if it has none.
+#[tauri::command]
+async fn machine_add(target: String, name: Option<String>) -> Result<Value, String> {
+    let target = target.trim().to_string();
+    if target.is_empty() || target.starts_with('-') || target.contains(char::is_whitespace) {
+        return Err("Type how ssh reaches it: a Host from ~/.ssh/config, user@host or user@host:port".into());
+    }
+    let mut args = vec!["machine", "add", target.as_str(), "--json", "--install"];
+    let name = name.map(|n| n.trim().to_string()).filter(|n| !n.is_empty());
+    if let Some(n) = &name {
+        args.extend(["--name", n.as_str()]);
+    }
+    let out = hc::run(&args).await?;
+    if !out.ok() {
+        return Err(out.stderr.trim().lines().last().unwrap_or("couldn't add the machine").to_string());
+    }
+    Ok(serde_json::from_str(out.stdout.trim()).unwrap_or(Value::Null))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -123,7 +150,8 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            terminals, terminal, send, keys, interrupt, screen, locate, subagents, page, search, follow, unfollow
+            terminals, terminal, send, keys, interrupt, screen, locate, subagents, page, search, follow, unfollow,
+            machines, machine_add
         ])
         .run(tauri::generate_context!())
         .expect("error while running Sheepy");
