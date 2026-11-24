@@ -336,3 +336,7 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 .confirm-title { font-weight: 600; font-size: 15px; }
 .confirm-body { color: var(--muted); font-size: 13px; }
 .form-actions button.danger { background: var(--blocked); color: white; }
+
+.update-bar { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); z-index: 70; display: flex; align-items: center; gap: 10px; padding: 7px 8px 7px 14px; border-radius: 12px; background: var(--card); border: 1px solid var(--border); box-shadow: var(--shadow); font-size: 13px; }
+.update-bar button { padding: 4px 12px; border-radius: 8px; background: var(--accent); color: white; }
+.update-bar button.link { background: none; color: var(--accent); }

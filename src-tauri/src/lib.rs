@@ -114,6 +114,21 @@ async fn send(address: String, text: String, force: Option<bool>) -> Result<(), 
     Err(if blocked { format!("blocked: {e}") } else { e })
 }
 
+/// When this process started, to tell whether a newer build was installed since.
+static STARTED: std::sync::OnceLock<std::time::SystemTime> = std::sync::OnceLock::new();
+
+/// A newer build of this app was installed after it started (the stable
+/// install script replaces the app in place): the window offers a restart.
+#[tauri::command]
+fn newer_installed() -> bool {
+    let Some(started) = STARTED.get() else { return false };
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| std::fs::metadata(p).ok())
+        .and_then(|m| m.modified().ok())
+        .is_some_and(|built| built > *started)
+}
+
 /// Restarts the app (⌘K "Restart Sheepy").
 #[tauri::command]
 fn restart(app: AppHandle) {
@@ -396,6 +411,7 @@ fn save_snapshot(data: String) -> Result<(), String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let _ = STARTED.set(std::time::SystemTime::now());
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
@@ -423,7 +439,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             terminals, terminal, send, keys, interrupt, screen, locate, subagents, page, search, follow, unfollow,
             machines, machine_add, save_snapshot, resume, machine_stats, set_group, new_session, ssh_hosts,
-            close_session, log_dir, restart
+            close_session, log_dir, restart, newer_installed
         ])
         .run(tauri::generate_context!())
         .expect("error while running Sheepy");

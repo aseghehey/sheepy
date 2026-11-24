@@ -50,6 +50,15 @@ export default function App() {
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
   }, []);
+  // A newer Sheepy was installed while this one runs: offer to restart into it.
+  const [newer, setNewer] = useState(false);
+  useEffect(() => {
+    if (import.meta.env.DEV) return;
+    const check = () => core.newerInstalled().then(setNewer).catch(() => {});
+    check();
+    const t = setInterval(check, 60000);
+    return () => clearInterval(t);
+  }, []);
   const reachable = useMemo(() => [null, ...machines.filter((m) => m.state === "connected").map((m) => m.name)], [machines]);
 
   const list = useMemo(() => hosts(facts?.terminals ?? [], machines), [facts, machines]);
@@ -57,6 +66,13 @@ export default function App() {
 
   return (
     <div className="app">
+      {newer && (
+        <div className="update-bar">
+          A newer version of Sheepy is installed.
+          <button onClick={() => core.restart()}>Restart now</button>
+          <button className="link" onClick={() => setNewer(false)}>Later</button>
+        </div>
+      )}
       <Palette open={search !== null} tab={search ?? "search"} onClose={() => setSearch(null)} machines={reachable} terminals={facts?.terminals ?? []} onOpen={setTarget} />
       <CommandPalette open={commands} onClose={() => setCommands(false)} hosts={list} view={view} setView={setView}
         onOpen={setTarget} onSearch={(tab) => { setCommands(false); setSearch(tab); }} />
