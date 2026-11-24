@@ -59,3 +59,22 @@ test("a live session's terminal, through its process or a launcher above it", ()
   assert.equal(terminalOfLive({ pid: 7 }, "vps", terminals), null, "same pid, other machine");
   assert.equal(terminalOfLive(null, null, terminals), null);
 });
+
+import { archivedMatching } from "../src/lib/palette.js";
+
+test("archived: what was said counts too, running sessions only counted", () => {
+  const lists = [{ machine: "vps", answer: { sessions: [
+    { session: "a", name: "Library work", project: "/w/dms", last_ts: 5 },
+    { session: "b", title: "Deploy fix", project: "/w/infra", last_ts: 9 },
+    { session: "c", name: "ConfigService follow ups", live: { pid: 3 }, last_ts: 99 },
+  ] } }];
+  const results = [
+    { machine: "vps", session: "b", last_ts: 9, hits: [{ snippet: "Created REVIEW-4242", highlights: [] }] },
+    { machine: "vps", session: "c", last_ts: 99, hits: [] },
+  ];
+  const { rows, running } = archivedMatching(lists, "REVIEW-4242", results);
+  assert.deepEqual(rows.map((r) => r.session), ["b"], "matched by what was said, not by its name");
+  assert.equal(rows[0].hit.snippet, "Created REVIEW-4242");
+  assert.equal(running, 1, "the running one is counted, not listed");
+  assert.deepEqual(archivedMatching(lists, "dms", []).rows.map((r) => r.session), ["a"]);
+});

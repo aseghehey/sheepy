@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { core, type Terminal } from "../lib/core";
-import { mergeResults, sessionLabel, snippetParts, archived, ago, terminalOfLive } from "../lib/palette.js";
+import { mergeResults, sessionLabel, snippetParts, archivedMatching, ago, terminalOfLive } from "../lib/palette.js";
 import type { Target } from "./Sidebar";
 
 type Tab = "search" | "archived";
@@ -38,16 +38,17 @@ export function Palette({ open, tab: initialTab = "search", onClose, machines, t
 
   // Searching, a quarter second after typing stops; only the latest answer counts.
   useEffect(() => {
-    if (!open || tab !== "search") return;
+    if (!open) return;
     const query = q.trim();
-    if (!query) { setResults([]); return; }
+    // Archived searches what was said too, once there are a few letters.
+    if (!query || (tab === "archived" && query.length < 3)) { setResults([]); return; }
     const id = ++run.current;
     const t = setTimeout(async () => {
       setBusy(true);
       const order = sort === "recent" ? ["--recent"] : [];
       const answers = await Promise.all(machines.map(async (m) => ({
         machine: m,
-        answer: await core.search(m, ["query", "--json", "--sessions", "15", "--hits", "3", ...order, query]).catch((e) => { setError(String(e)); return null; }),
+        answer: await core.search(m, ["query", "--json", "--sessions", tab === "archived" ? "60" : "15", "--hits", "3", ...order, query]).catch((e) => { setError(String(e)); return null; }),
       })));
       if (id !== run.current) return;
       setResults(mergeResults(answers, sort));
@@ -59,18 +60,20 @@ export function Palette({ open, tab: initialTab = "search", onClose, machines, t
   const info = (machine: string | null, session: string) =>
     lists.find((l) => l.machine === machine)?.answer?.sessions?.find((s: any) => s.session === session);
 
-  const openSession = async (machine: string | null, s: any) => {
+  const openSession = async (machine: string | null, s: any, hit?: any) => {
     setError(null);
     const full = info(machine, s.session) ?? s;
     const running = terminalOfLive(full.live, machine, terminals);
+    // At the matched message: its offset in the log, and the words to mark.
+    const jump = hit ? { offset: hit.offset, words: q.trim() } : undefined;
     if (running) {
-      onOpen({ kind: "session", address: running.address, title: sessionLabel(full) });
+      onOpen({ kind: "session", address: running.address, title: sessionLabel(full), jump });
       return onClose();
     }
     try {
       setBusy(true);
       const address = await core.resume(machine, full.project ?? "", full.session, sessionLabel(full));
-      onOpen({ kind: "session", address, title: sessionLabel(full) });
+      onOpen({ kind: "session", address, title: sessionLabel(full), jump });
       onClose();
     } catch (e) { setError(String(e)); } finally { setBusy(false); }
   };
@@ -86,12 +89,13 @@ export function Palette({ open, tab: initialTab = "search", onClose, machines, t
   };
 
   if (!open) return null;
-  const rows = tab === "archived" ? archived(lists, q).slice(0, 200) : [];
+  const { rows: allRows, running } = tab === "archived" ? archivedMatching(lists, q, results) : { rows: [], running: 0 };
+  const rows = allRows.slice(0, 200);
   return (
     <div className="palette-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="palette" onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); onClose(); } }}>
         <div className="palette-tabs">
-          <button className={tab === "search" ? "on" : ""} onClick={() => setTab("search")}>Search</button>
+          <button className={tab === "search" ? "on" : ""} onClick={() => setTab("search")}>Search conversations</button>
           <button className={tab === "archived" ? "on" : ""} onClick={() => setTab("archived")}>Archived</button>
           <span style={{ flex: 1 }} />
           {tab === "search" && (
@@ -102,7 +106,7 @@ export function Palette({ open, tab: initialTab = "search", onClose, machines, t
           )}
         </div>
         <input ref={box} className="palette-input" value={q} spellCheck={false}
-          placeholder={tab === "search" ? "Search every session (words, \"a phrase\", -not, in:folder, after:7d)" : "Filter by name or folder"}
+          placeholder={tab === "search" ? "Search what was said in every session (words, \"a phrase\", -not, in:folder, after:7d)" : "Filter by name, folder, or what was said"}
           onChange={(e) => setQ(e.target.value)} />
         {error && <div className="banner">{error}</div>}
         <div className="palette-list">
@@ -112,14 +116,14 @@ export function Palette({ open, tab: initialTab = "search", onClose, machines, t
             const full = info(s.machine, s.session) ?? s;
             const live = Boolean(full.live);
             return (
-              <button key={`${s.machine}:${s.session}`} className="result" onClick={() => openSession(s.machine, s)}>
+              <button key={`${s.machine}:${s.session}`} className="result" onClick={() => openSession(s.machine, s, s.hits?.[0])}>
                 <div className="result-head">
                   <span className={`dot ${live ? "dot-working" : ""}`} />
                   <span className="label">{sessionLabel(full)}</span>
                   <span className="meta">{[s.machine, ago(s.last_ts)].filter(Boolean).join(" · ")}</span>
                 </div>
                 {(s.hits ?? []).map((h: any, i: number) => (
-                  <div key={i} className="snippet">
+                  <div key={i} className="snippet" role="button" onClick={(e) => { e.stopPropagation(); openSession(s.machine, s, h); }}>
                     <span className="role">{h.role === "user" ? "You" : "Claude"}</span>
                     {snippetParts(h.snippet, h.highlights).map((p, j) => (p.hit ? <mark key={j}>{p.text}</mark> : <span key={j}>{p.text}</span>))}
                   </div>
@@ -127,6 +131,9 @@ export function Palette({ open, tab: initialTab = "search", onClose, machines, t
               </button>
             );
           })}
+          {tab === "archived" && running > 0 && (
+            <div className="hint">{running} running session{running === 1 ? "" : "s"} also match{running === 1 ? "es" : ""}: see Search conversations.</div>
+          )}
           {tab === "archived" && rows.map((s: any) => {
             const key = `${s.machine}:${s.session}`;
             return (
@@ -139,8 +146,13 @@ export function Palette({ open, tab: initialTab = "search", onClose, machines, t
                   ) : <span className="label">{s.label}</span>}
                   <span className="meta">{[s.machine, (s.project ?? "").split("/").filter(Boolean).pop(), ago(s.last_ts)].filter(Boolean).join(" · ")}</span>
                   <button className="link" onClick={() => setRenaming({ key, name: s.label })}>Rename</button>
-                  <button className="link" disabled={busy} onClick={() => openSession(s.machine, s)}>Resume</button>
+                  <button className="link" disabled={busy} onClick={() => openSession(s.machine, s, s.hit)}>Resume</button>
                 </div>
+                {s.hit && (
+                  <div className="snippet">
+                    {snippetParts(s.hit.snippet, s.hit.highlights).map((p: any, j: number) => (p.hit ? <mark key={j}>{p.text}</mark> : <span key={j}>{p.text}</span>))}
+                  </div>
+                )}
               </div>
             );
           })}

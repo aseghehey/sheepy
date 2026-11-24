@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
 import { core, machineOf } from "../lib/core";
-import { subagentRow } from "../lib/sessions.js";
+import { subagentRow, orderGroups, moveGroup } from "../lib/sessions.js";
 import { Machines, useHealth, Health } from "./Machines";
 import { Confirm, type ConfirmRequest } from "./Confirm";
 
 export type Target =
-  | { kind: "session"; address: string; title: string }
+  | { kind: "session"; address: string; title: string; jump?: { offset: number; words: string } }
   | { kind: "subagent"; address: string; id: string; file: string; title: string; parentTitle: string };
 
 interface Session { address: string; title: string; status: string; activity: string | null; machine: string | null; cwd?: string | null }
@@ -167,16 +167,30 @@ export function Sidebar({ hosts, target, logs, onSelect, onClosed, error, machin
   const [renaming, setRenaming] = useState<{ id: string; name: string } | null>(null);
   const [moveError, setMoveError] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null);
+  // Sessions being closed show "Closing…"; closed ones leave the list at once,
+  // without waiting for herdr-core's next picture.
+  const [closing, setClosing] = useState<Set<string>>(new Set());
+  const [closed, setClosed] = useState<Set<string>>(new Set());
+  const mark = (set: typeof setClosing, list: string[], on: boolean) => set((s) => {
+    const n = new Set(s);
+    list.forEach((a) => (on ? n.add(a) : n.delete(a)));
+    return n;
+  });
   const folders = (machine: string | null) => [...new Set(hosts.filter((h) => h.machine === machine).flatMap((h) => h.groups.flatMap((g) => g.sessions.map((s) => s.cwd ?? "")))).values()].filter(Boolean).sort();
   const closeSessions = (list: Session[], what: string) => setConfirm({
     title: `Close ${what}?`,
     body: `${list.length === 1 ? "Its Claude Code session ends" : `${list.length} Claude Code sessions end`} and ${list.length === 1 ? "its terminal is" : "their terminals are"} removed. The conversation stays in its log: you can resume it from Archived (⌘⇧F).`,
     action: list.length === 1 ? "Close session" : `Close ${list.length} sessions`,
     run: async () => {
+      const addresses = list.map((s) => s.address);
+      mark(setClosing, addresses, true);
+      onClosed(addresses);
       const results = await Promise.allSettled(list.map((s) => core.closeSession(s.address)));
-      const closed = list.filter((_, i) => results[i].status === "fulfilled").map((s) => s.address);
+      const done = list.filter((_, i) => results[i].status === "fulfilled").map((s) => s.address);
       const failed = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
-      onClosed(closed);
+      mark(setClosing, addresses, false);
+      mark(setClosed, done, true);
+      core.refreshNow().catch(() => {});
       setMoveError(failed.length ? `${failed.length} of ${list.length} didn't close: ${String(failed[0].reason)}` : null);
     },
   });
@@ -203,15 +217,34 @@ export function Sidebar({ hosts, target, logs, onSelect, onClosed, error, machin
     } catch (e) { setMoveError(String(e)); }
   };
 
+  // The person's order of a host's groups (drag a group's header onto another).
+  const [order, setOrder] = useState<Record<string, string[]>>(() => {
+    try { return JSON.parse(localStorage.getItem("group.order") ?? "{}"); } catch { return {}; }
+  });
+  const [draggingGroup, setDraggingGroup] = useState<{ host: string; id: string } | null>(null);
+  const reorder = (h: Host, id: string, before: string) => {
+    const ids = orderGroups(h.groups, order[h.id]).map((g: Win) => g.id);
+    const next = { ...order, [h.id]: moveGroup(ids, id, before) };
+    setOrder(next);
+    localStorage.setItem("group.order", JSON.stringify(next));
+  };
+
   const group = (h: Host, w: Win) => {
     const open = !folded.has(w.id);
     const first = w.sessions[0];
     const canDrop = dragging && dragging.machine === h.machine;
+    const canReorder = draggingGroup && draggingGroup.host === h.id && draggingGroup.id !== w.id;
+    const sessions = w.sessions.filter((s) => !closed.has(s.address));
+    if (!sessions.length && w.sessions.length) return null;
     return (
       <div key={w.id} className={`window ${over === w.id ? "drop" : ""}`}
-        onDragOver={(e) => { if (canDrop) { e.preventDefault(); setOver(w.id); } }}
+        onDragOver={(e) => { if (canDrop || canReorder) { e.preventDefault(); setOver(w.id); } }}
         onDragLeave={() => setOver((o) => (o === w.id ? null : o))}
-        onDrop={(e) => { e.preventDefault(); setOver(null); if (canDrop) move(dragging!.address, w.name); }}>
+        onDrop={(e) => {
+          e.preventDefault(); setOver(null);
+          if (canReorder) reorder(h, draggingGroup!.id, w.id);
+          else if (canDrop) move(dragging!.address, w.name);
+        }}>
         <div className="window-head">
           {renaming?.id === w.id ? (
             <input className="rename small" autoFocus value={renaming.name}
@@ -219,10 +252,13 @@ export function Sidebar({ hosts, target, logs, onSelect, onClosed, error, machin
               onKeyDown={(e) => { if (e.key === "Enter") renameGroup(w, renaming.name); else if (e.key === "Escape") setRenaming(null); }}
               onBlur={() => setRenaming(null)} />
           ) : (
-            <button className="window-toggle" onClick={() => toggle(w.id)} onDoubleClick={() => setRenaming({ id: w.id, name: w.name })} title="Double-click to rename">
+            <button className="window-toggle" onClick={() => toggle(w.id)} onDoubleClick={() => setRenaming({ id: w.id, name: w.name })}
+              title="Double-click to rename · drag to reorder" draggable
+              onDragStart={(e) => { e.dataTransfer.setData("text/plain", w.id); e.dataTransfer.effectAllowed = "move"; setDraggingGroup({ host: h.id, id: w.id }); }}
+              onDragEnd={() => { setDraggingGroup(null); setOver(null); }}>
               <span className={`chev ${open ? "open" : ""}`}>›</span>
               <span className="label">{w.name}</span>
-              <span className="count">{w.sessions.length}</span>
+              <span className="count">{sessions.length}</span>
               {!open && w.status !== "idle" && <StatusDot status={w.status} />}
             </button>
           )}
@@ -231,17 +267,18 @@ export function Sidebar({ hosts, target, logs, onSelect, onClosed, error, machin
           <button className="add close" title={`Close every session in ${w.name}…`}
             onClick={() => closeSessions(w.sessions, `the group “${w.name}”`)}>×</button>
         </div>
-        {open && w.sessions.map((s) => {
+        {open && sessions.map((s) => {
           const on = target?.address === s.address;
+          const isClosing = closing.has(s.address);
           return (
             <div key={s.address}>
-              <button className={`row ${on && target?.kind === "session" ? "on" : ""}`} title={s.activity ?? s.title}
+              <button className={`row ${on && target?.kind === "session" ? "on" : ""} ${isClosing ? "closing" : ""}`} title={s.activity ?? s.title}
                 draggable
                 onDragStart={(e) => { e.dataTransfer.setData("text/plain", s.address); e.dataTransfer.effectAllowed = "move"; setDragging(s); }}
                 onDragEnd={() => { setDragging(null); setOver(null); }}
                 onClick={() => onSelect({ kind: "session", address: s.address, title: s.title })}>
                 <StatusDot status={s.status} />
-                <span className="label">{s.title}</span>
+                <span className="label">{isClosing ? `Closing ${s.title}…` : s.title}</span>
                 <span className="row-x" role="button" title="Close this session…"
                   onClick={(e) => { e.stopPropagation(); closeSessions([s], `“${s.title}”`); }}>×</span>
               </button>
@@ -258,7 +295,7 @@ export function Sidebar({ hosts, target, logs, onSelect, onClosed, error, machin
       <div className="sidebar-head" data-tauri-drag-region>
         <span style={{ flex: 1 }} data-tauri-drag-region />
         <button className="head-btn" title="New session" onClick={() => setStarting({ machine: null, folder: "", group: "" })}>+</button>
-        <button className="head-btn" title="Search every session (⌘⇧F)" onClick={() => window.dispatchEvent(new KeyboardEvent("keydown", { key: "f", metaKey: true, shiftKey: true }))}>
+        <button className="head-btn" title="Search conversations (⌘⇧F)" onClick={() => window.dispatchEvent(new KeyboardEvent("keydown", { key: "f", metaKey: true, shiftKey: true }))}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
         </button>
       </div>
@@ -269,7 +306,7 @@ export function Sidebar({ hosts, target, logs, onSelect, onClosed, error, machin
         <NewSession hosts={choices} initial={starting} folders={folders}
           groups={(m) => hosts.filter((h) => h.machine === m).flatMap((h) => h.groups.map((g) => g.name))}
           onDone={() => setStarting(null)}
-          onStarted={(address, title) => onSelect({ kind: "session", address, title })} />
+          onStarted={(address, title) => { core.refreshNow().catch(() => {}); onSelect({ kind: "session", address, title }); }} />
       )}
       <div className="sidebar-list">
         {hosts.every((h) => !h.groups.length) && !error && <div className="hint">No Claude Code sessions yet. Start one with +.</div>}
@@ -295,7 +332,7 @@ export function Sidebar({ hosts, target, logs, onSelect, onClosed, error, machin
                   </div>
                 )}
               </div>
-              {open && h.groups.map((w) => group(h, w))}
+              {open && orderGroups(h.groups, order[h.id]).map((w: Win) => group(h, w))}
               {open && !h.groups.length && <div className="hint indent">No sessions</div>}
               {open && dragging && dragging.machine === h.machine && (
                 <div className={`new-group ${over === `new:${h.id}` ? "drop" : ""}`}

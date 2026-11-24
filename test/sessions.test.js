@@ -130,3 +130,18 @@ test("groups under their host, this computer first, hosts without sessions liste
   ]);
   assert.equal(h[0].status, "blocked");
 });
+
+import { orderGroups, moveGroup } from "../src/lib/sessions.js";
+
+test("groups in the person's order, new ones after", () => {
+  const groups = [{ id: "a" }, { id: "b" }, { id: "c" }, { id: "d" }];
+  assert.deepEqual(orderGroups(groups, ["c", "a"]).map((g) => g.id), ["c", "a", "b", "d"]);
+  assert.deepEqual(orderGroups(groups, []).map((g) => g.id), ["a", "b", "c", "d"]);
+  assert.deepEqual(orderGroups(groups, ["gone", "d"]).map((g) => g.id), ["d", "a", "b", "c"]);
+});
+
+test("moving a group before another, or to the end", () => {
+  assert.deepEqual(moveGroup(["a", "b", "c", "d"], "d", "b"), ["a", "d", "b", "c"]);
+  assert.deepEqual(moveGroup(["a", "b", "c"], "a", null), ["b", "c", "a"]);
+  assert.deepEqual(moveGroup(["a", "b", "c"], "b", "b"), ["a", "c", "b"], "onto itself: to the end of the rest");
+});

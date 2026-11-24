@@ -155,3 +155,21 @@ export function hosts(terminals, machines = []) {
       groups,
     }));
 }
+
+/** Groups in the person's order (ids, as kept), the rest after them as they came. */
+export function orderGroups(groups, order) {
+  const at = new Map((order ?? []).map((id, i) => [id, i]));
+  return [...(groups ?? [])].map((g, i) => ({ g, i })).sort((a, b) => {
+    const x = at.has(a.g.id) ? at.get(a.g.id) : Infinity;
+    const y = at.has(b.g.id) ? at.get(b.g.id) : Infinity;
+    return x === y ? a.i - b.i : x - y;
+  }).map((x) => x.g);
+}
+
+/** The order after moving group `id` to just before `before` (null: to the end). */
+export function moveGroup(ids, id, before) {
+  const rest = ids.filter((x) => x !== id);
+  const at = before == null ? rest.length : rest.indexOf(before);
+  rest.splice(at < 0 ? rest.length : at, 0, id);
+  return rest;
+}

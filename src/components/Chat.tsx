@@ -18,26 +18,58 @@ type Entry = any;
 /** Follows a log: its transcript, re-read when the log is rewritten. */
 function useTranscript(id: string, machine: string | null, file: string | null, sidechain: boolean) {
   const t = useRef<any>(null);
+  // Every line read so far, oldest first: rebuilding the transcript with
+  // earlier history in front needs them.
+  const raw = useRef<{ line: string; at: number }[]>([]);
   const [version, setVersion] = useState(0);
-  const [state, setState] = useState<{ loading: boolean; error: string | null; truncated: boolean; from: number }>({ loading: true, error: null, truncated: false, from: 0 });
+  const [state, setState] = useState<{ loading: boolean; error: string | null; truncated: boolean; from: number; earlier: boolean }>({ loading: true, error: null, truncated: false, from: 0, earlier: false });
+  const fromRef = useRef(0);
   useEffect(() => {
     if (!file) return;
     t.current = new Transcript("claude", { sidechain });
-    setState({ loading: true, error: null, truncated: false, from: 0 });
+    raw.current = [];
+    setState({ loading: true, error: null, truncated: false, from: 0, earlier: false });
     let alive = true;
     const off = core.onLog((e) => {
       if (!alive || e.id !== id) return;
       if (e.error) return setState((s) => ({ ...s, loading: false, error: String(e.error) }));
-      if (e.reset || e.first) t.current = new Transcript("claude", { sidechain });
-      for (const l of e.lines ?? []) t.current.feed(l.line, l.at);
-      if (e.first) setState({ loading: false, error: null, truncated: Boolean(e.truncated), from: e.from ?? 0 });
+      if (e.reset || e.first) { t.current = new Transcript("claude", { sidechain }); raw.current = []; }
+      for (const l of e.lines ?? []) { t.current.feed(l.line, l.at); raw.current.push(l); }
+      if (e.first) { fromRef.current = e.from ?? 0; setState({ loading: false, error: null, truncated: Boolean(e.truncated), from: e.from ?? 0, earlier: false }); }
       else setState((s) => (s.error ? { ...s, error: null } : s));
       setVersion((v) => v + 1);
     });
     core.follow(id, machine, file, sidechain).catch((err) => setState((s) => ({ ...s, loading: false, error: String(err) })));
     return () => { alive = false; off.then((u) => u()); core.unfollow(id); };
   }, [id, machine, file, sidechain]);
-  return { transcript: t.current, version, ...state };
+
+  // Earlier history, page by page (each within herdr-search's output budget),
+  // back to `target` (a log offset) or about 2 MB further. At most 40 pages.
+  const loadEarlier = async (target?: number) => {
+    if (!file || sidechain || fromRef.current <= 0) return;
+    setState((s) => ({ ...s, earlier: true }));
+    try {
+      let to = fromRef.current;
+      const goal = Math.max(0, target ?? to - 2_000_000);
+      let got: { line: string; at: number }[] = [];
+      for (let pages = 0; to > goal && pages < 40; pages++) {
+        const p = await core.page(machine, file, goal, to);
+        if (!p?.lines?.length || p.from >= to) { to = Math.min(to, p?.from ?? to); break; }
+        got = [...p.lines, ...got];
+        to = p.from;
+      }
+      raw.current = [...got, ...raw.current];
+      const tr: any = new Transcript("claude", { sidechain });
+      for (const l of raw.current) tr.feed(l.line, l.at);
+      t.current = tr;
+      fromRef.current = to;
+      setState((s) => ({ ...s, from: to, truncated: to > 0, earlier: false }));
+      setVersion((v) => v + 1);
+    } catch (e) {
+      setState((s) => ({ ...s, earlier: false, error: String(e) }));
+    }
+  };
+  return { transcript: t.current, version, loadEarlier, ...state };
 }
 
 function ToolGroup({ items, subagents, onOpenSubagent }: { items: any[]; subagents: SubAgent[]; onOpenSubagent: (s: SubAgent) => void }) {
@@ -128,7 +160,7 @@ export function Chat({ target, terminal, onLog, onOpenSubagent, view, setView }:
   }, [target.address, pid, isSub]);
 
   const followId = isSub ? `sub:${target.address}:${target.id}` : `session:${target.address}`;
-  const { transcript, version, loading, error, truncated } = useTranscript(followId, machine, file, isSub);
+  const { transcript, version, loading, error, truncated, from: loadedFrom, earlier, loadEarlier } = useTranscript(followId, machine, file, isSub);
   const entries: Entry[] = useMemo(() => (transcript?.entries ?? []).slice(), [transcript, version]);
 
   // The session's sub-agents, to link each Task call to its own transcript.
@@ -165,7 +197,7 @@ export function Chat({ target, terminal, onLog, onOpenSubagent, view, setView }:
   const findBox = useRef<HTMLInputElement>(null);
   const hits: number[] = useMemo(() => (finding ? findEntries(entries, query) : []), [finding, query, entries]);
   const words: string[] = useMemo(() => (finding ? queryWords(query) : []), [finding, query]);
-  useEffect(() => { setHit(-1); }, [query]);
+  useEffect(() => { if (!jump) setHit(-1); }, [query]);
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       if (e.metaKey && !e.shiftKey && e.key.toLowerCase() === "f") { e.preventDefault(); setFinding(true); setTimeout(() => findBox.current?.select(), 0); }
@@ -174,6 +206,27 @@ export function Chat({ target, terminal, onLog, onOpenSubagent, view, setView }:
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
   });
+  // Opened from a search hit: load back to it if it's older than what's
+  // loaded, then go there with the searched words found.
+  const jumped = useRef<string | null>(null);
+  const jump = target.kind === "session" ? target.jump : undefined;
+  useEffect(() => {
+    if (!jump || loading || !transcript) return;
+    const key = `${file}:${jump.offset}`;
+    if (jumped.current === key) return;
+    if (jump.offset < loadedFrom) { jumped.current = `loading:${key}`; loadEarlier(jump.offset); return; }
+    const idx = transcript.entryAt(jump.offset);
+    if (idx < 0) return;
+    jumped.current = key;
+    setFinding(true);
+    setQuery(jump.words);
+    setTimeout(() => {
+      list.current?.scrollToIndex({ index: idx, align: "center" });
+      const found = findEntries(transcript.entries, jump.words);
+      setHit(Math.max(0, found.indexOf(idx)));
+    }, 60);
+  }, [jump?.offset, loading, version, loadedFrom]);
+
   const go = (dir: number) => {
     const next = step(hits, hit, dir);
     setHit(next);
@@ -259,7 +312,14 @@ export function Chat({ target, terminal, onLog, onOpenSubagent, view, setView }:
           atBottomStateChange={setAtBottom}
           atBottomThreshold={80}
           increaseViewportBy={{ top: 800, bottom: 400 }}
-          components={{ Header: () => (truncated ? <div className="hint center">Earlier messages aren't loaded.</div> : <div style={{ height: 12 }} />), Footer: () => <div style={{ height: 16 }} /> }}
+          components={{
+            Header: () => (truncated ? (
+              <div className="hint center">
+                <button className="link" disabled={earlier} onClick={() => loadEarlier()}>{earlier ? "Loading earlier messages…" : "Load earlier messages"}</button>
+              </div>
+            ) : <div style={{ height: 12 }} />),
+            Footer: () => <div style={{ height: 16 }} />,
+          }}
           itemContent={(i, e) => (
             <div className={`entry ${hit >= 0 && hits[hit] === i ? "found" : ""}`}>
               <EntryView e={e} subagents={subagents} onOpenSubagent={openSub} words={hits.includes(i) ? words : undefined} />

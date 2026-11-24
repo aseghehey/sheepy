@@ -342,3 +342,5 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 .update-bar button.link { background: none; color: var(--accent); }
 .new-session .inline { display: flex; gap: 6px; align-items: center; }
 .new-session .inline input { flex: 1; }
+.row.closing { opacity: 0.5; pointer-events: none; }
+.window-toggle[draggable="true"] { cursor: default; }

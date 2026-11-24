@@ -9,7 +9,7 @@ import { FONTS, WIDTHS, THEMES, stepZoom } from "./view.js";
 export function commandList(hosts, view) {
   const out = [
     { id: "new", title: "New session…", group: "Sessions", keys: "", run: { kind: "new-session" } },
-    { id: "search", title: "Search every session…", group: "Search", keys: "⌘⇧F", run: { kind: "search", tab: "search" } },
+    { id: "search", title: "Search conversations…", group: "Search", keys: "⌘⇧F", run: { kind: "search", tab: "search" } },
     { id: "archived", title: "Archived sessions…", group: "Sessions", run: { kind: "search", tab: "archived" } },
     { id: "find", title: "Find in this conversation", group: "Search", keys: "⌘F", run: { kind: "find" } },
     { id: "close-session", title: "Close this session…", group: "Sessions", run: { kind: "event", name: "sheepy:close-session" } },

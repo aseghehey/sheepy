@@ -89,6 +89,18 @@ fn refresh_terminals(app: AppHandle) {
     });
 }
 
+/// The full picture now, sent to the window at once (after closing or
+/// starting a session, so it doesn't wait for the next refresh).
+#[tauri::command]
+async fn refresh_now(app: AppHandle) -> Result<(), String> {
+    let v = fresh_picture().await?;
+    if v.get("terminals").is_some_and(Value::is_array) {
+        *app.state::<Latest>().0.lock().unwrap() = Some(v.clone());
+        let _ = app.emit("terminals", v);
+    }
+    Ok(())
+}
+
 /// Everything herdr-core knows now, in full (the same shape as an event):
 /// the latest event's picture, else the first one a fresh `events` sends.
 #[tauri::command]
@@ -582,7 +594,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             terminals, terminal, send, keys, interrupt, screen, locate, subagents, page, search, follow, unfollow,
             machines, machine_add, save_snapshot, resume, machine_stats, set_group, new_session, ssh_hosts,
-            close_session, log_dir, restart, newer_installed
+            close_session, log_dir, restart, newer_installed, refresh_now
         ])
         .run(tauri::generate_context!())
         .expect("error while running Sheepy");

@@ -72,3 +72,24 @@ export function terminalOfLive(live, machine, terminals) {
     return m === (machine ?? null) && t.state === "live" && pids.has(t.foreground?.pid);
   }) ?? null;
 }
+
+/**
+ * Archived, filtered by name, folder and what was said: the sessions that
+ * aren't running whose name or folder has `filter`, or whose conversation
+ * matched it (`results`, from a search; each such row carries its first hit).
+ * Newest first. `running`: how many running sessions matched the search,
+ * which Archived doesn't list.
+ */
+export function archivedMatching(lists, filter, results) {
+  const byName = archived(lists, filter);
+  const rows = new Map(byName.map((s) => [`${s.machine}:${s.session}`, s]));
+  let running = 0;
+  for (const r of results ?? []) {
+    const key = `${r.machine ?? null}:${r.session}`;
+    const info = (lists ?? []).find((l) => (l.machine ?? null) === (r.machine ?? null))?.answer?.sessions?.find((s) => s.session === r.session);
+    if (info?.live) { running += 1; continue; }
+    const row = rows.get(key) ?? { machine: r.machine ?? null, ...(info ?? r), label: sessionLabel(info ?? r) };
+    rows.set(key, { ...row, hit: r.hits?.[0] ?? null, last_ts: row.last_ts ?? r.last_ts });
+  }
+  return { rows: [...rows.values()].sort((a, b) => (b.last_ts ?? 0) - (a.last_ts ?? 0)), running };
+}
