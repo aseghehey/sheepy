@@ -102,5 +102,19 @@ test("which options take the person's own words", () => {
   assert.ok(!isTypeOption("Chat about this"));
   assert.ok(!isTypeOption("Keep INFO"));
   assert.equal(freeTextOption(["A", "Type something.", "Chat about this"]), 1);
-  assert.equal(freeTextOption(["A", "Chat about this"]), 1, "else the chat option");
+  assert.equal(freeTextOption(["A", "Chat about this"]), -1, "never the chat option");
+  assert.equal(freeTextOption(["Apple", "Pear", "xyz", "Chat about this"]), 2, "the field, showing what's typed in it");
+});
+
+import { typedIn, toFreeText } from "../src/lib/prompt.js";
+test("a free-text field that already has something typed is emptied first", () => {
+  const q = { options: ["Apple", "Pear", "xyz", "Chat about this"], selected: 1 };
+  assert.equal(typedIn(q, 2), "xyz");
+  const keys = toFreeText(q, 2);
+  assert.deepEqual(keys.slice(0, 2), ["down", "end"]);
+  assert.equal(keys.filter((k) => k === "backspace").length, 23);
+  assert.ok(!keys.includes("enter"));
+  const empty = { options: ["Apple", "Pear", "Type something.", "Chat about this"], selected: 0 };
+  assert.equal(typedIn(empty, 2), "");
+  assert.deepEqual(toFreeText(empty, 2), ["down", "down"]);
 });

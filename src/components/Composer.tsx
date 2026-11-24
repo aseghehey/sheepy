@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { core } from "../lib/core";
 import { annotationMessage } from "../lib/anno.js";
-import { parsePrompt, choose, freeTextOption } from "../lib/prompt.js";
+import { parsePrompt, freeTextOption, toFreeText } from "../lib/prompt.js";
 import type { Anno } from "./Annotations";
 
 // The message box: Enter sends, Shift+Enter starts a new line, Escape (or
@@ -61,9 +61,9 @@ export function Composer({ address, working, blocked = false, annos = [], onSent
     const q = parsePrompt(await core.screen(address, 60));
     const i = q ? freeTextOption(q.options) : -1;
     if (!q || i < 0) throw new Error("The agent is waiting on a question: answer it in the card above (or press Esc there to dismiss it).");
-    // Only move to it (no Enter: that could submit it empty), then type the
-    // answer and press Enter once.
-    const moves = choose(q.selected, i).slice(0, -1);
+    // Only move to it (no Enter: that could submit it empty) and empty what's
+    // typed there, then type the answer and press Enter once.
+    const moves = toFreeText(q, i);
     if (moves.length) await core.keys(address, moves);
     await new Promise((r) => setTimeout(r, 300));
     await core.send(address, message, true);

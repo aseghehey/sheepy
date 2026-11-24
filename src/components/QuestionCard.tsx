@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { core } from "../lib/core";
-import { parsePrompt, choose, clean, isTypeOption } from "../lib/prompt.js";
+import { parsePrompt, choose, clean, freeTextOption, typedIn, toFreeText } from "../lib/prompt.js";
 import { Markdown } from "./Markdown";
 
 // The agent is waiting on a menu (a question it asked, a permission): its
@@ -10,8 +10,8 @@ import { Markdown } from "./Markdown";
 //
 // An option that takes the person's own words ("Type something.") opens a
 // field here: Enter moves the agent's selection to that option (arrow keys
-// only, no Enter there, which would submit it empty), then types the answer
-// and presses Enter once.
+// only, no Enter there, which would submit it empty), empties what's already
+// typed there, then types the answer and presses Enter once.
 export function QuestionCard({ address, transcript }: { address: string; transcript: any; version?: number }) {
   const [screen, setScreen] = useState<string | null>(null);
   const [typing, setTyping] = useState<number | null>(null);
@@ -47,7 +47,7 @@ export function QuestionCard({ address, transcript }: { address: string; transcr
     setBusy(true);
     setError(null);
     try {
-      const moves = choose(q.selected, n).slice(0, -1);
+      const moves = toFreeText(q, n);
       if (moves.length) await core.keys(address, moves);
       await new Promise((r) => setTimeout(r, 250));
       await core.send(address, text, true);
@@ -71,13 +71,14 @@ export function QuestionCard({ address, transcript }: { address: string; transcr
       </div>
       {question?.header && <div className="chip">{question.header}</div>}
       {(question?.question || q?.question) && <Markdown text={question?.question ?? q!.question} />}
-      {q && (
+      {q && (() => { const freeAt = freeTextOption(q.options); return (
         <div className="choices">
           {q.options.map((o: string, n: number) => {
             const opt = question?.options?.[n];
-            const label = opt?.label ?? clean(o);
-            const desc = opt?.description ?? q.details?.[n] ?? "";
-            const free = isTypeOption(label);
+            const free = n === freeAt;
+            const draft = free ? typedIn(q, n) : "";
+            const label = free ? "Type something" : opt?.label ?? clean(o);
+            const desc = free ? (draft ? `Typed so far: ${draft}` : "Your own answer") : opt?.description ?? q.details?.[n] ?? "";
             if (free && typing === n) {
               return (
                 <div key={n} className="choice on typing">
@@ -97,7 +98,7 @@ export function QuestionCard({ address, transcript }: { address: string; transcr
             }
             return (
               <button key={n} className={`choice ${n === q.selected ? "on" : ""}`} disabled={busy}
-                onClick={() => (free ? (setTyping(n), setAnswer("")) : keys(choose(q.selected, n)))}>
+                onClick={() => (free ? (setTyping(n), setAnswer(draft)) : keys(choose(q.selected, n)))}>
                 <span className="choice-n">{n + 1}</span>
                 <span className="choice-body">
                   <span className="choice-label">{label}</span>
@@ -107,7 +108,7 @@ export function QuestionCard({ address, transcript }: { address: string; transcr
             );
           })}
         </div>
-      )}
+      ); })()}
       {error && <div className="banner">{error}</div>}
       <div className="question-keys">
         {q?.steps && <><button onClick={() => keys(["left"])} title="The previous part">← Back</button><button onClick={() => keys(["right"])} title="The next part">Next →</button></>}

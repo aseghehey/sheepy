@@ -109,10 +109,29 @@ export function choose(from, to) {
 }
 
 // The option of a question menu that takes the person's own words ("Type
-// something.", "Other", "Chat about this"), or -1.
+// something.", "Other"), or -1. Once something is typed in it, it shows that
+// instead: then it's the one just above "Chat about this". Never "Chat about
+// this" itself, which sets the question aside.
 export function freeTextOption(options) {
-  const i = (options ?? []).findIndex((o) => isTypeOption(o));
-  return i >= 0 ? i : (options ?? []).findIndex((o) => /^chat about this\b/i.test(String(o).trim()));
+  const o = options ?? [];
+  const i = o.findIndex((x) => isTypeOption(x));
+  if (i >= 0) return i;
+  const chat = o.findIndex((x) => /^chat about this\b/i.test(String(x).trim()));
+  return chat >= 2 ? chat - 1 : -1;
+}
+
+// What's already typed in the free-text option `i` ("" when it's empty).
+export function typedIn(q, i) {
+  const o = String(q?.options?.[i] ?? "").replace(/ ✓$/, "");
+  return i < 0 || isTypeOption(o) ? "" : o;
+}
+
+// The keys that put the selection on the free-text option `i` and empty it,
+// without Enter (that would submit it): then the answer is pasted and sent.
+export function toFreeText(q, i) {
+  const moves = choose(q.selected, i).slice(0, -1);
+  const typed = typedIn(q, i);
+  return typed ? [...moves, "end", ...Array(typed.length + 20).fill("backspace")] : moves;
 }
 
 // An option whose answer is the person's own words: "Type something.", "Other".
