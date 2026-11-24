@@ -8,6 +8,7 @@ import { Composer } from "./Composer";
 import { QuestionCard } from "./QuestionCard";
 import { StatusDot, type Target } from "./Sidebar";
 import { ViewMenu, type View } from "./ViewMenu";
+import { Confirm, type ConfirmRequest } from "./Confirm";
 import { viewStyle } from "../lib/view.js";
 import { QuoteLayer, AnnotationTray, useAnnotations } from "./Annotations";
 import { findEntries, queryWords, step } from "../lib/findin.js";
@@ -233,6 +234,33 @@ export function Chat({ target, terminal, onLog, onOpenSubagent, view, setView }:
     if (next >= 0) list.current?.scrollToIndex({ index: hits[next], align: "center", behavior: "smooth" });
   };
   const notes = useAnnotations(target.address);
+  // Restarting the session: Claude Code again on this conversation.
+  const [confirmRestart, setConfirmRestart] = useState<ConfirmRequest | null>(null);
+  const [restarting, setRestarting] = useState(false);
+  const doRestart = async () => {
+    if (!file) return;
+    setRestarting(true);
+    try {
+      const address = await core.restartSession(target.address, file);
+      core.refreshNow().catch(() => {});
+      onOpenSubagent({ kind: "session", address, title });
+    } catch (e) { setRenameError(String(e)); } finally { setRestarting(false); }
+  };
+  const askRestart = () => {
+    if (isSub || !file) return;
+    if (status === "working" || status === "blocked") {
+      setConfirmRestart({
+        title: "Restart this session?",
+        body: status === "working" ? "The agent is working: restarting stops what it's doing. The conversation continues where it was." : "The agent is waiting on a question, which restarting dismisses. The conversation continues where it was.",
+        action: "Restart",
+        run: doRestart,
+      });
+    } else doRestart();
+  };
+  useEffect(() => {
+    window.addEventListener("sheepy:restart-session", askRestart);
+    return () => window.removeEventListener("sheepy:restart-session", askRestart);
+  });
   const conv = useRef<HTMLDivElement>(null);
 
   // Renaming the session: Claude Code's /rename keeps the name in its log (so
@@ -271,8 +299,15 @@ export function Chat({ target, terminal, onLog, onOpenSubagent, view, setView }:
         <button className={`head-btn ${finding ? "on" : ""}`} title="Find in this conversation (⌘F)" onClick={() => { setFinding(!finding); setTimeout(() => findBox.current?.focus(), 0); }}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
         </button>
+        {!isSub && file && (
+          <button className="head-btn" title="Restart this session (Claude Code again, same conversation)" disabled={restarting} onClick={askRestart}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8" /><path d="M21 3v5h-5" /></svg>
+          </button>
+        )}
         <ViewMenu view={view} setView={setView} />
       </header>
+      <Confirm request={confirmRestart} onClose={() => setConfirmRestart(null)} />
+      {restarting && <div className="banner info">Restarting the session…</div>}
       {finding && (
         <div className="find-bar">
           <input ref={findBox} autoFocus value={query} placeholder="Find in this conversation" spellCheck={false}

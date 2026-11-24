@@ -379,6 +379,45 @@ async fn close_session(address: String) -> Result<(), String> {
     }
 }
 
+/// Restarts a session: ends its Claude Code and starts it again on the same
+/// conversation (--resume), in the same folder, machine, group and window
+/// labels. `log`: the session's log, whose name is its id. The new address.
+#[tauri::command]
+async fn restart_session(address: String, log: String) -> Result<String, String> {
+    let session = std::path::Path::new(&log).file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+    if session.is_empty() || !session.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        return Err("couldn't tell which conversation this is".into());
+    }
+    let got = hc::run(&["get", &address, "--json"]).await?;
+    let t: Value = serde_json::from_str(got.stdout.trim()).map_err(|_| core_error(&got))?;
+    let machine = hc::machine_of(&address).map(String::from);
+    let folder = t.pointer("/foreground/cwd").or(t.get("cwd")).and_then(Value::as_str).unwrap_or("").to_string();
+    // The labels that place it: its group, and the window it's in.
+    let labels: Vec<String> = t.get("labels").and_then(Value::as_object).map(|m| {
+        m.iter().filter(|(k, _)| k.as_str() == "sheepy.group" || k.as_str() == "where" || k.starts_with("herdr."))
+            .filter_map(|(k, v)| v.as_str().map(|v| format!("{k}={v}"))).collect()
+    }).unwrap_or_default();
+    close_session(address.clone()).await?;
+    let mut args: Vec<String> = vec!["run".into(), "--bg".into(), "--json".into(), "--no-parent".into(), "--keep".into()];
+    if !folder.is_empty() {
+        args.extend(["--cwd".into(), folder.clone()]);
+    }
+    if let Some(m) = &machine {
+        args.extend(["--on".into(), m.clone()]);
+    }
+    for l in labels {
+        args.extend(["--label".into(), l]);
+    }
+    args.push("--".into());
+    args.extend(claude_argv(machine.as_deref()).await);
+    args.extend(["--resume".into(), session.clone()]);
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let out = hc::run(&refs).await?;
+    let new = started(&out, machine.as_deref(), (!folder.is_empty()).then_some(folder.as_str()))?;
+    log::info!("restarted {address} as {new} (session {session})");
+    Ok(new)
+}
+
 /// Where Sheepy writes its log.
 #[tauri::command]
 fn log_dir(app: AppHandle) -> Result<String, String> {
@@ -594,7 +633,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             terminals, terminal, send, keys, interrupt, screen, locate, subagents, page, search, follow, unfollow,
             machines, machine_add, save_snapshot, resume, machine_stats, set_group, new_session, ssh_hosts,
-            close_session, log_dir, restart, newer_installed, refresh_now
+            close_session, log_dir, restart, newer_installed, refresh_now, restart_session
         ])
         .run(tauri::generate_context!())
         .expect("error while running Sheepy");

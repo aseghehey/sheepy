@@ -59,6 +59,7 @@ export const core = {
     invoke<string>("new_session", { machine, folder, group }),
   sshHosts: () => invoke<string[]>("ssh_hosts"),
   closeSession: (address: string) => invoke<void>("close_session", { address }),
+  restartSession: (address: string, log: string) => invoke<string>("restart_session", { address, log }),
   logDir: () => invoke<string>("log_dir"),
   restart: () => invoke<void>("restart"),
   refreshNow: () => invoke<void>("refresh_now"),

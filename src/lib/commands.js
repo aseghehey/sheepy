@@ -12,6 +12,7 @@ export function commandList(hosts, view) {
     { id: "search", title: "Search conversations…", group: "Search", keys: "⌘⇧F", run: { kind: "search", tab: "search" } },
     { id: "archived", title: "Archived sessions…", group: "Sessions", run: { kind: "search", tab: "archived" } },
     { id: "find", title: "Find in this conversation", group: "Search", keys: "⌘F", run: { kind: "find" } },
+    { id: "restart-session", title: "Restart this session", group: "Sessions", run: { kind: "event", name: "sheepy:restart-session" } },
     { id: "close-session", title: "Close this session…", group: "Sessions", run: { kind: "event", name: "sheepy:close-session" } },
     { id: "close-group", title: "Close this session's group…", group: "Sessions", run: { kind: "event", name: "sheepy:close-group" } },
     { id: "logs", title: "Show logs", group: "Help", run: { kind: "logs" } },
