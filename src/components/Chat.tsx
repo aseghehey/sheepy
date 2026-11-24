@@ -3,7 +3,7 @@ import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { core, machineOf, type Terminal, type SubAgent } from "../lib/core";
 import { Transcript } from "../lib/parse.js";
 import { statusOf, activityOf, subagentRow } from "../lib/sessions.js";
-import { Markdown } from "./Markdown";
+import { Markdown, copyToClipboard } from "./Markdown";
 import { Composer } from "./Composer";
 import { QuestionCard } from "./QuestionCard";
 import { StatusDot, type Target } from "./Sidebar";
@@ -101,6 +101,19 @@ function ToolGroup({ items, subagents, onOpenSubagent }: { items: any[]; subagen
   );
 }
 
+/** Copies a whole message (its text as written, Markdown included). */
+function CopyMessage({ text, side }: { text: string; side: "mine" | "theirs" }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className={`msg-actions ${side}`}>
+      <button className={copied ? "done" : ""} title="Copy this message"
+        onClick={async () => { await copyToClipboard(text); setCopied(true); setTimeout(() => setCopied(false), 1500); }}>
+        {copied ? "Copied" : "Copy"}
+      </button>
+    </div>
+  );
+}
+
 function EntryView({ e, subagents, onOpenSubagent, words }: { e: Entry; subagents: SubAgent[]; onOpenSubagent: (s: SubAgent) => void; words?: string[] }) {
   const mark = (t: string) => (words?.length ? markWords(t, words) : t);
   switch (e.kind) {
@@ -111,10 +124,11 @@ function EntryView({ e, subagents, onOpenSubagent, words }: { e: Entry; subagent
             {e.text && (e.command ? <code>{e.text}</code> : <Markdown text={mark(e.text)} />)}
             {(e.images ?? []).map((im: any, i: number) => <img key={i} className="msg-img" src={`data:image/${im.ext ?? "png"};base64,${im.data}`} />)}
           </div>
+          {e.text && <CopyMessage text={e.text} side="mine" />}
         </div>
       );
     case "assistant":
-      return <div className="msg-row theirs"><Markdown text={mark(e.text)} /></div>;
+      return <div className="msg-row theirs"><Markdown text={mark(e.text)} /><CopyMessage text={e.text} side="theirs" /></div>;
     case "tools":
       return <ToolGroup items={e.items} subagents={subagents} onOpenSubagent={onOpenSubagent} />;
     case "note":
