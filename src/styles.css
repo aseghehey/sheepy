@@ -318,3 +318,10 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 .add-machine { padding: 4px 8px; font-size: 12.5px; }
 .new-chat { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; pointer-events: none; }
 .new-chat-title { font-size: 18px; font-weight: 600; color: var(--muted); }
+
+/* The health popup: small */
+.host-head .health-card { width: 168px; padding: 7px 9px; border-radius: 9px; }
+.host-head .health { gap: 3px; }
+.host-head .stat { grid-template-columns: 34px 1fr 30px; gap: 6px; font-size: 10.5px; }
+.host-head .bar { height: 4px; }
+.health-foot { font-size: 10px; color: var(--dim); margin-top: 2px; }

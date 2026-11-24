@@ -231,7 +231,7 @@ export function Sidebar({ hosts, target, logs, onSelect, error, machines }: {
                   onClick={() => setStarting({ machine: h.machine, folder: "", group: "" })}>+</button>
                 {hoverHost?.id === h.id && st === "connected" && (
                   <div className="health-card" style={{ position: "fixed", left: hoverHost.x, top: Math.min(hoverHost.y, window.innerHeight - 220) }}>
-                    <div className="health-title">{h.name}</div><Health s={health[h.machine ?? ""] as any} />
+                    <Health s={health[h.machine ?? ""] as any} />
                   </div>
                 )}
               </div>

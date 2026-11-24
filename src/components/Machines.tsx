@@ -42,20 +42,22 @@ function Bar({ pct }: { pct: number }) {
   return <span className="bar"><span style={{ width: `${Math.min(100, Math.max(0, pct))}%`, background: level(pct) }} /></span>;
 }
 
+// A small card: CPU, memory and each disk as a short bar with its number,
+// and uptime and load in one line under them.
 export function Health({ s }: { s: Stats | { error: string } | undefined }) {
   if (!s) return <div className="health hint">Reading…</div>;
-  if ("error" in s) return <div className="health hint">Couldn't read it: {s.error}</div>;
+  if ("error" in s) return <div className="health hint">Couldn't read it</div>;
   const mem = s.mem_total > 0 ? (100 * s.mem_used) / s.mem_total : null;
+  const row = (label: string, pct: number, title?: string) => (
+    <div className="stat" title={title}><span>{label}</span><Bar pct={pct} /><span className="v">{Math.round(pct)}%</span></div>
+  );
   return (
     <div className="health">
-      {s.uptime != null && <div className="stat"><span>Up</span><span className="v">{duration(s.uptime)}</span></div>}
-      {s.cpu != null && <div className="stat"><span>CPU</span><Bar pct={s.cpu} /><span className="v">{Math.round(s.cpu)}%</span></div>}
-      {s.load && <div className="stat"><span>Load</span><span className="v">{s.load}{s.ncpu ? ` · ${s.ncpu} cores` : ""}</span></div>}
-      {mem != null && <div className="stat"><span>Memory</span><Bar pct={mem} /><span className="v">{gb(s.mem_used)} of {gb(s.mem_total)}</span></div>}
-      {(s.disks ?? []).map((d: any) => {
-        const pct = (100 * d.used) / d.size;
-        return <div key={d.mount} className="stat"><span>{d.mount === "/System/Volumes/Data" ? "Disk" : `Disk ${d.mount}`}</span><Bar pct={pct} /><span className="v">{gb(d.size - d.used)} free</span></div>;
-      })}
+      {s.cpu != null && row("CPU", s.cpu, s.load ? `load ${s.load}` : undefined)}
+      {mem != null && row("Mem", mem, `${gb(s.mem_used)} of ${gb(s.mem_total)}`)}
+      {(s.disks ?? []).map((d: any) => row(d.mount === "/System/Volumes/Data" || d.mount === "/" ? "Disk" : d.mount.split("/").pop() || d.mount,
+        (100 * d.used) / d.size, `${d.mount}: ${gb(d.size - d.used)} free of ${gb(d.size)}`))}
+      {s.uptime != null && <div className="health-foot">up {duration(s.uptime)}{s.load ? ` · load ${s.load.split(" ")[0]}` : ""}</div>}
     </div>
   );
 }
