@@ -3,6 +3,11 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import "./styles.css";
 import { parseView } from "./lib/view.js";
+import { error as logError } from "@tauri-apps/plugin-log";
+
+// The window's own errors go to the log file too (Show logs in ⌘K).
+window.addEventListener("error", (e) => { logError(`window: ${e.message} at ${e.filename}:${e.lineno}`).catch(() => {}); });
+window.addEventListener("unhandledrejection", (e) => { logError(`window: unhandled ${String(e.reason?.stack ?? e.reason)}`).catch(() => {}); });
 
 // Light, dark, or as the Mac is set: before the first frame, so it doesn't flash.
 document.documentElement.dataset.theme = parseView(localStorage.getItem("view")).theme;

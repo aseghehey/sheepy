@@ -1,11 +1,15 @@
 import { Component, type ReactNode } from "react";
+import { error as logError } from "@tauri-apps/plugin-log";
 
 // A part of the window that fails to draw shows what went wrong, with a way
 // to try again, instead of taking the whole window down.
 export class ErrorBoundary extends Component<{ children: ReactNode; label: string }, { error: Error | null }> {
   state = { error: null as Error | null };
   static getDerivedStateFromError(error: Error) { return { error }; }
-  componentDidCatch(error: Error) { console.error(`${this.props.label}:`, error); }
+  componentDidCatch(error: Error) {
+    console.error(`${this.props.label}:`, error);
+    logError(`${this.props.label}: ${error.stack ?? error}`).catch(() => {});
+  }
   render() {
     if (!this.state.error) return this.props.children;
     return (

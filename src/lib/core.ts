@@ -58,6 +58,8 @@ export const core = {
   newSession: (machine: string | null, folder: string | null, group: string | null) =>
     invoke<string>("new_session", { machine, folder, group }),
   sshHosts: () => invoke<string[]>("ssh_hosts"),
+  closeSession: (address: string) => invoke<void>("close_session", { address }),
+  logDir: () => invoke<string>("log_dir"),
   onTerminals: (fn: (f: Facts) => void): Promise<UnlistenFn> => listen<Facts>("terminals", (e) => fn(e.payload)),
   onLog: (fn: (e: LogEvent) => void): Promise<UnlistenFn> => listen<LogEvent>("log", (e) => fn(e.payload)),
 };

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { core, machineOf } from "../lib/core";
 import { subagentRow } from "../lib/sessions.js";
 import { Machines, useHealth, Health } from "./Machines";
+import { Confirm, type ConfirmRequest } from "./Confirm";
 
 export type Target =
   | { kind: "session"; address: string; title: string }
@@ -68,12 +69,18 @@ function SubAgents({ session, file, target, onSelect }: { session: Session; file
 }
 
 /** A new session: where (a host and a folder) and which group. */
-function NewSession({ hosts, initial, onDone, onStarted }: {
+// The last folder a session was started in, per host (a folder on this Mac
+// means nothing on another machine).
+const folderKey = (machine: string) => `new.folder:${machine || "local"}`;
+const lastFolder = (machine: string | null) => localStorage.getItem(folderKey(machine ?? "")) ?? "";
+
+function NewSession({ hosts, initial, folders, onDone, onStarted }: {
   hosts: string[]; initial: { machine: string | null; folder: string; group: string };
+  folders: (machine: string | null) => string[];
   onDone: () => void; onStarted: (address: string, title: string) => void;
 }) {
   const [machine, setMachine] = useState<string>(initial.machine ?? "");
-  const [folder, setFolder] = useState(initial.folder);
+  const [folder, setFolder] = useState(initial.folder || lastFolder(initial.machine));
   const [group, setGroup] = useState(initial.group);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -82,7 +89,7 @@ function NewSession({ hosts, initial, onDone, onStarted }: {
     setError(null);
     try {
       const address = await core.newSession(machine || null, folder || null, group || null);
-      localStorage.setItem("new.folder", folder);
+      localStorage.setItem(folderKey(machine), folder);
       onStarted(address, folder.split("/").filter(Boolean).pop() ?? "New session");
       onDone();
     } catch (e) { setError(String(e)); } finally { setBusy(false); }
@@ -92,12 +99,15 @@ function NewSession({ hosts, initial, onDone, onStarted }: {
       onKeyDown={(e) => { if (e.key === "Escape") onDone(); }}>
       <div className="form-title">New Claude Code session</div>
       <label>Host
-        <select value={machine} onChange={(e) => setMachine(e.target.value)}>
+        <select value={machine} onChange={(e) => { setMachine(e.target.value); setFolder(lastFolder(e.target.value || null)); }}>
           <option value="">This computer</option>
           {hosts.map((m) => <option key={m} value={m}>{m}</option>)}
         </select>
       </label>
-      <label>Folder<input autoFocus value={folder} placeholder="~ (home)" spellCheck={false} onChange={(e) => setFolder(e.target.value)} /></label>
+      <label>Folder on {machine || "this computer"}
+        <input autoFocus value={folder} placeholder="~ (home)" spellCheck={false} list="folders" onChange={(e) => setFolder(e.target.value)} />
+        <datalist id="folders">{folders(machine || null).map((f) => <option key={f} value={f} />)}</datalist>
+      </label>
       <label>Group<input value={group} placeholder="(none)" onChange={(e) => setGroup(e.target.value)} /></label>
       {error && <div className="banner">{error}</div>}
       <div className="form-actions">
@@ -126,7 +136,7 @@ export function Sidebar({ hosts, target, logs, onSelect, error, machines }: {
   const choices = [...new Set([...machines.map((m) => m.name), ...sshHosts])].sort();
   const [starting, setStarting] = useState<{ machine: string | null; folder: string; group: string } | null>(null);
   useEffect(() => {
-    const open = () => setStarting({ machine: null, folder: localStorage.getItem("new.folder") ?? "", group: "" });
+    const open = () => setStarting({ machine: null, folder: "", group: "" });
     window.addEventListener("sheepy:new-session", open);
     return () => window.removeEventListener("sheepy:new-session", open);
   }, []);
@@ -138,6 +148,31 @@ export function Sidebar({ hosts, target, logs, onSelect, error, machines }: {
   // Renaming a group: every session in it takes the new name.
   const [renaming, setRenaming] = useState<{ id: string; name: string } | null>(null);
   const [moveError, setMoveError] = useState<string | null>(null);
+  const [confirm, setConfirm] = useState<ConfirmRequest | null>(null);
+  const folders = (machine: string | null) => [...new Set(hosts.filter((h) => h.machine === machine).flatMap((h) => h.groups.flatMap((g) => g.sessions.map((s) => s.cwd ?? "")))).values()].filter(Boolean).sort();
+  const closeSessions = (list: Session[], what: string) => setConfirm({
+    title: `Close ${what}?`,
+    body: `${list.length === 1 ? "Its Claude Code session ends" : `${list.length} Claude Code sessions end`} and ${list.length === 1 ? "its terminal is" : "their terminals are"} removed. The conversation stays in its log: you can resume it from Archived (⌘⇧F).`,
+    action: list.length === 1 ? "Close session" : `Close ${list.length} sessions`,
+    run: async () => {
+      try {
+        await Promise.all(list.map((s) => core.closeSession(s.address)));
+        setMoveError(null);
+      } catch (e) { setMoveError(String(e)); }
+    },
+  });
+  // From the command palette: close the open session, or its whole group.
+  useEffect(() => {
+    const find = () => {
+      for (const h of hosts) for (const g of h.groups) for (const s of g.sessions) if (s.address === target?.address) return { g, s };
+      return null;
+    };
+    const one = () => { const f = find(); if (f) closeSessions([f.s], `“${f.s.title}”`); };
+    const all = () => { const f = find(); if (f) closeSessions(f.g.sessions, `the group “${f.g.name}”`); };
+    window.addEventListener("sheepy:close-session", one);
+    window.addEventListener("sheepy:close-group", all);
+    return () => { window.removeEventListener("sheepy:close-session", one); window.removeEventListener("sheepy:close-group", all); };
+  });
   const move = (address: string, group: string) => core.setGroup(address, group).then(() => setMoveError(null)).catch((e) => setMoveError(String(e)));
   const renameGroup = async (g: Win, name: string) => {
     setRenaming(null);
@@ -174,6 +209,8 @@ export function Sidebar({ hosts, target, logs, onSelect, error, machines }: {
           )}
           <button className="add" title={`New session in ${w.name}`}
             onClick={() => setStarting({ machine: h.machine, folder: first?.cwd ?? "", group: w.name })}>+</button>
+          <button className="add close" title={`Close every session in ${w.name}…`}
+            onClick={() => closeSessions(w.sessions, `the group “${w.name}”`)}>×</button>
         </div>
         {open && w.sessions.map((s) => {
           const on = target?.address === s.address;
@@ -186,6 +223,8 @@ export function Sidebar({ hosts, target, logs, onSelect, error, machines }: {
                 onClick={() => onSelect({ kind: "session", address: s.address, title: s.title })}>
                 <StatusDot status={s.status} />
                 <span className="label">{s.title}</span>
+                <span className="row-x" role="button" title="Close this session…"
+                  onClick={(e) => { e.stopPropagation(); closeSessions([s], `“${s.title}”`); }}>×</span>
               </button>
               {on && logs[s.address] && <SubAgents session={s} file={logs[s.address]} target={target} onSelect={onSelect} />}
             </div>
@@ -199,7 +238,7 @@ export function Sidebar({ hosts, target, logs, onSelect, error, machines }: {
     <aside className="sidebar">
       <div className="sidebar-head" data-tauri-drag-region>
         <span style={{ flex: 1 }} data-tauri-drag-region />
-        <button className="head-btn" title="New session" onClick={() => setStarting({ machine: null, folder: localStorage.getItem("new.folder") ?? "", group: "" })}>+</button>
+        <button className="head-btn" title="New session" onClick={() => setStarting({ machine: null, folder: "", group: "" })}>+</button>
         <button className="head-btn" title="Search every session (⌘⇧F)" onClick={() => window.dispatchEvent(new KeyboardEvent("keydown", { key: "f", metaKey: true, shiftKey: true }))}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
         </button>
@@ -208,7 +247,7 @@ export function Sidebar({ hosts, target, logs, onSelect, error, machines }: {
       {moveError && <div className="banner">{moveError}</div>}
       {down.map((m) => <div key={m.name} className="banner">{m.name} is {m.state}</div>)}
       {starting && (
-        <NewSession hosts={choices} initial={starting} onDone={() => setStarting(null)}
+        <NewSession hosts={choices} initial={starting} folders={folders} onDone={() => setStarting(null)}
           onStarted={(address, title) => onSelect({ kind: "session", address, title })} />
       )}
       <div className="sidebar-list">
@@ -256,6 +295,7 @@ export function Sidebar({ hosts, target, logs, onSelect, error, machines }: {
         )}
       </div>
       <Machines live={machines} />
+      <Confirm request={confirm} onClose={() => setConfirm(null)} />
     </aside>
   );
 }

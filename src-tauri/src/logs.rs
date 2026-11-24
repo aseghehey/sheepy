@@ -124,6 +124,9 @@ pub fn follow(app: AppHandle, follows: &Follows, id: String, on: Option<String>,
     let task_id = id.clone();
     let handle = tauri::async_runtime::spawn(async move {
         let emit = |v: Value| {
+            if let Some(e) = v.get("error") {
+                log::warn!("reading {}: {}", task_id, e);
+            }
             let _ = app.emit("log", v);
         };
         let on = on.as_deref();

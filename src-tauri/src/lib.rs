@@ -208,6 +208,47 @@ fn ssh_hosts() -> Vec<String> {
     seen.into_iter().collect()
 }
 
+/// What `herdr-core run --json` answered: the new terminal's address, or its
+/// error in plain words (`{"error": {"kind", "message", "hint"}}`).
+fn started(out: &hc::Out, machine: Option<&str>, folder: Option<&str>) -> Result<String, String> {
+    let v: Value = serde_json::from_str(out.stdout.trim()).unwrap_or(Value::Null);
+    if let Some(a) = v.get("address").and_then(Value::as_str) {
+        return Ok(a.to_string());
+    }
+    let host = machine.unwrap_or("this computer");
+    let err = v.get("error");
+    let message = err.and_then(|e| e.get("message")).and_then(Value::as_str).unwrap_or("").to_string();
+    let kind = err.and_then(|e| e.get("kind")).and_then(Value::as_str).unwrap_or("");
+    let text = if kind == "spawn_failed" && message.contains("No such file or directory") {
+        match folder {
+            Some(f) => format!("There's no folder {f} on {host} (or Claude Code isn't installed there)."),
+            None => format!("Claude Code isn't installed on {host} (claude wasn't found)."),
+        }
+    } else if !message.is_empty() {
+        message
+    } else {
+        out.stderr.trim().lines().last().unwrap_or("couldn't start it").to_string()
+    };
+    log::warn!("starting a session on {host} failed: {text} ({})", out.stdout.trim());
+    Err(text)
+}
+
+/// Ends a session: its program (Claude Code), then its terminal. Its log
+/// stays, so it can be resumed later (Archived).
+#[tauri::command]
+async fn close_session(address: String) -> Result<(), String> {
+    let kill = hc::run(&["kill", &address]).await?;
+    let rm = hc::run(&["rm", &address]).await?;
+    log::info!("closed {address} (kill: {}, rm: {})", kill.code, rm.code);
+    if rm.ok() || kill.ok() { Ok(()) } else { Err(rm.stderr.trim().to_string()) }
+}
+
+/// Where Sheepy writes its log.
+#[tauri::command]
+fn log_dir(app: AppHandle) -> Result<String, String> {
+    app.path().app_log_dir().map(|p| p.to_string_lossy().into_owned()).map_err(|e| e.to_string())
+}
+
 /// Resumes a session that isn't running: Claude Code with --resume, in its
 /// own folder (Claude finds a session only from there), on its machine, in a
 /// herdr-core terminal that stays alive. Its address.
@@ -229,11 +270,7 @@ async fn resume(machine: Option<String>, project: String, session: String, title
     args.extend(["--resume".into(), session]);
     let refs: Vec<&str> = args.iter().map(String::as_str).collect();
     let out = hc::run(&refs).await?;
-    if !out.ok() {
-        return Err(out.stderr.trim().lines().last().unwrap_or("couldn't resume it").to_string());
-    }
-    let v: Value = serde_json::from_str(out.stdout.trim()).map_err(|e| e.to_string())?;
-    v.get("address").and_then(Value::as_str).map(String::from).ok_or_else(|| "herdr-core didn't say where it started".into())
+    started(&out, machine.as_deref(), None)
 }
 
 /// Puts a session in a group of the person's (its `sheepy.group` label), or
@@ -271,11 +308,12 @@ async fn new_session(machine: Option<String>, folder: Option<String>, group: Opt
         }
     }
     let mut args: Vec<String> = vec!["run".into(), "--bg".into(), "--json".into(), "--no-parent".into(), "--keep".into()];
-    if let Some(f) = folder.map(|f| f.trim().to_string()).filter(|f| !f.is_empty()) {
+    let folder = folder.map(|f| f.trim().to_string()).filter(|f| !f.is_empty());
+    if let Some(f) = &folder {
         if f.starts_with('-') {
             return Err("not a folder".into());
         }
-        args.extend(["--cwd".into(), f]);
+        args.extend(["--cwd".into(), f.clone()]);
     }
     if let Some(m) = &machine {
         args.extend(["--on".into(), m.clone()]);
@@ -287,11 +325,9 @@ async fn new_session(machine: Option<String>, folder: Option<String>, group: Opt
     args.extend(claude_argv());
     let refs: Vec<&str> = args.iter().map(String::as_str).collect();
     let out = hc::run(&refs).await?;
-    if !out.ok() {
-        return Err(out.stderr.trim().lines().last().unwrap_or("couldn't start it").to_string());
-    }
-    let v: Value = serde_json::from_str(out.stdout.trim()).map_err(|e| e.to_string())?;
-    v.get("address").and_then(Value::as_str).map(String::from).ok_or_else(|| "herdr-core didn't say where it started".into())
+    let address = started(&out, machine.as_deref(), folder.as_deref())?;
+    log::info!("started {address} on {} in {}", machine.as_deref().unwrap_or("this computer"), folder.as_deref().unwrap_or("~"));
+    Ok(address)
 }
 
 /// Development only: a screenshot of the window on request, without the
@@ -328,6 +364,18 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
+        // ~/Library/Logs/<app id>/Sheepy.log (rotated), and the terminal in development.
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                .level(log::LevelFilter::Info)
+                .max_file_size(2_000_000)
+                .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepOne)
+                .targets([
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir { file_name: Some("Sheepy".into()) }),
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
+                ])
+                .build(),
+        )
         .manage(logs::Follows::default())
         .manage(Latest::default())
         .setup(|app| {
@@ -339,8 +387,41 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             terminals, terminal, send, keys, interrupt, screen, locate, subagents, page, search, follow, unfollow,
-            machines, machine_add, save_snapshot, resume, machine_stats, set_group, new_session, ssh_hosts
+            machines, machine_add, save_snapshot, resume, machine_stats, set_group, new_session, ssh_hosts,
+            close_session, log_dir
         ])
         .run(tauri::generate_context!())
         .expect("error while running Sheepy");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn out(stdout: &str) -> hc::Out {
+        hc::Out { code: 0, stdout: stdout.into(), stderr: String::new() }
+    }
+
+    #[test]
+    fn a_started_terminal_gives_its_address() {
+        assert_eq!(started(&out(r#"{"address":"vps/t1k","state":"live"}"#), Some("vps"), None).unwrap(), "vps/t1k");
+    }
+
+    #[test]
+    fn a_missing_folder_is_said_plainly() {
+        let o = out(r#"{"error":{"hint":"check the program name and cwd","kind":"spawn_failed","message":"cannot start \"claude\": No such file or directory (os error 2)"}}"#);
+        assert_eq!(
+            started(&o, Some("vps"), Some("/Volumes/x")).unwrap_err(),
+            "There's no folder /Volumes/x on vps (or Claude Code isn't installed there)."
+        );
+        assert_eq!(started(&o, None, None).unwrap_err(), "Claude Code isn't installed on this computer (claude wasn't found).");
+    }
+
+    #[test]
+    fn other_errors_keep_herdr_cores_words() {
+        let o = out(r#"{"error":{"kind":"unreachable","message":"vps isn't reachable"}}"#);
+        assert_eq!(started(&o, Some("vps"), None).unwrap_err(), "vps isn't reachable");
+        let o = hc::Out { code: 1, stdout: "".into(), stderr: "boom\nlast line".into() };
+        assert_eq!(started(&o, None, None).unwrap_err(), "last line");
+    }
 }

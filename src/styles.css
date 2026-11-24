@@ -325,3 +325,14 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 .host-head .stat { grid-template-columns: 34px 1fr 30px; gap: 6px; font-size: 10.5px; }
 .host-head .bar { height: 4px; }
 .health-foot { font-size: 10px; color: var(--dim); margin-top: 2px; }
+
+/* Closing, and asking first */
+.window-head .add.close { font-size: 15px; }
+.row { position: relative; }
+.row-x { display: none; width: 18px; height: 18px; border-radius: 5px; color: var(--dim); text-align: center; line-height: 18px; flex: none; }
+.row:hover .row-x { display: block; }
+.row-x:hover { background: var(--hover); color: var(--blocked); }
+.confirm { width: min(420px, 90vw); margin-top: 18vh; padding: 18px; border-radius: 14px; background: var(--card); border: 1px solid var(--border); box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 10px; }
+.confirm-title { font-weight: 600; font-size: 15px; }
+.confirm-body { color: var(--muted); font-size: 13px; }
+.form-actions button.danger { background: var(--blocked); color: white; }
