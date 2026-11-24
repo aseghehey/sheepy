@@ -13,6 +13,7 @@ import { viewStyle } from "../lib/view.js";
 import { QuoteLayer, AnnotationTray, useAnnotations } from "./Annotations";
 import { findEntries, queryWords, step } from "../lib/findin.js";
 import { markWords } from "../lib/find.js";
+import { queuedView, stillPending } from "../lib/queue.js";
 
 type Entry = any;
 
@@ -234,6 +235,10 @@ export function Chat({ target, terminal, onLog, onOpenSubagent, view, setView }:
     if (next >= 0) list.current?.scrollToIndex({ index: hits[next], align: "center", behavior: "smooth" });
   };
   const notes = useAnnotations(target.address);
+  // Messages sent while Claude works: queued (its own queue, as its log
+  // says, and what was sent from here) until they're in the conversation.
+  const [pending, setPending] = useState<{ id: string; text: string; at: number; working: boolean }[]>([]);
+  useEffect(() => { setPending((p) => { const keep = stillPending(p, transcript?.entries ?? []); return keep.length === p.length ? p : keep; }); }, [version]);
   // Restarting the session: Claude Code again on this conversation.
   const [confirmRestart, setConfirmRestart] = useState<ConfirmRequest | null>(null);
   const [restarting, setRestarting] = useState(false);
@@ -353,7 +358,23 @@ export function Chat({ target, terminal, onLog, onOpenSubagent, view, setView }:
                 <button className="link" disabled={earlier} onClick={() => loadEarlier()}>{earlier ? "Loading earlier messages…" : "Load earlier messages"}</button>
               </div>
             ) : <div style={{ height: 12 }} />),
-            Footer: () => <div style={{ height: 16 }} />,
+            Footer: () => (
+              <div className="queued-list">
+                {queuedView(pending, entries, transcript?.queue ?? []).map((m: any) => (
+                  <div key={m.id} className="entry">
+                    <div className="msg-row mine">
+                      <div className={`bubble queued ${m.state}`}>
+                        <Markdown text={m.text} />
+                        <div className="queued-tag">
+                          {m.state === "queued" ? <>◷ Queued · sends when Claude is ready</> : <>Sending…</>}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+                <div style={{ height: 16 }} />
+              </div>
+            ),
           }}
           itemContent={(i, e) => (
             <div className={`entry ${hit >= 0 && hits[hit] === i ? "found" : ""}`}>
@@ -371,7 +392,11 @@ export function Chat({ target, terminal, onLog, onOpenSubagent, view, setView }:
           {status === "working" && <div className="activity"><span className="spinner" /> {activityOf(terminal) ?? "Working…"}</div>}
           {status === "blocked" && <QuestionCard address={target.address} transcript={transcript} version={version} />}
           <AnnotationTray {...notes} />
-          <Composer address={target.address} working={status === "working"} blocked={status === "blocked"} annos={notes.annos} onSentAnnos={notes.clear} />
+          <Composer address={target.address} working={status === "working"} blocked={status === "blocked"} annos={notes.annos} onSentAnnos={notes.clear}
+            onSent={(text, busy) => {
+              setPending((p) => [...p, { id: `${Date.now()}`, text, at: Date.now(), working: busy }]);
+              setTimeout(() => list.current?.scrollTo({ top: Number.MAX_SAFE_INTEGER, behavior: "smooth" }), 50);
+            }} />
         </>
       )}
       {isSub && <div className="readonly">A sub-agent's conversation, read-only.</div>}

@@ -8,7 +8,7 @@ import type { Anno } from "./Annotations";
 // Stop) interrupts a working agent. What's typed and not sent is kept per
 // session. It's a plain text area: the Mac's own editing, spelling, Look Up,
 // Services and right-click menu come with it.
-export function Composer({ address, working, blocked = false, annos = [], onSentAnnos }: { address: string; working: boolean; blocked?: boolean; annos?: Anno[]; onSentAnnos?: () => void }) {
+export function Composer({ address, working, blocked = false, annos = [], onSentAnnos, onSent }: { address: string; working: boolean; blocked?: boolean; annos?: Anno[]; onSentAnnos?: () => void; onSent?: (text: string, working: boolean) => void }) {
   const key = `draft:${address}`;
   const [text, setText] = useState(() => localStorage.getItem(key) ?? "");
   const [error, setError] = useState<string | null>(null);
@@ -44,6 +44,7 @@ export function Composer({ address, working, blocked = false, annos = [], onSent
         await answerWith(message);
       }
       setText("");
+      onSent?.(message, working);
       if (annos.length) onSentAnnos?.();
     } catch (e) {
       setError(String(e).replace(/^blocked: /, ""));
@@ -78,7 +79,7 @@ export function Composer({ address, working, blocked = false, annos = [], onSent
           ref={box}
           value={text}
           rows={1}
-          placeholder={blocked ? "Answer the question above, or type your own answer" : "Message Claude"}
+          placeholder={blocked ? "Answer the question above, or type your own answer" : working ? "Message Claude (it's queued until Claude is ready)" : "Message Claude"}
           spellCheck
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
