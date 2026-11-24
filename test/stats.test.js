@@ -36,11 +36,11 @@ test("after falling back a few points, a new crossing alerts again", () => {
 });
 
 test("several disks: each alert carries its own disk's numbers", () => {
-  const a = alertsFor("m", { disks: [disk("/Volumes/data", 96, 2000), disk("/", 50), disk("/workplace", 91, 500)] }, {}, 0);
+  const a = alertsFor("m", { disks: [disk("/Volumes/data", 96, 2000), disk("/", 50), disk("/srv", 91, 500)] }, {}, 0);
   assert.equal(a.length, 2);
   assert.equal(a[0].title, "m: disk /Volumes/data 96% full");
   assert.match(a[0].body, /free of 2\.0 TB/);
-  assert.equal(a[1].title, "m: disk /workplace 91% full");
+  assert.equal(a[1].title, "m: disk /srv 91% full");
   assert.match(a[1].body, /free of 500 GB/);
 });
 

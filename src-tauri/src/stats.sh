@@ -10,7 +10,10 @@ if [ "$os" = Linux ]; then
 $s2" | awk '{ idle = $5 + $6; total = 0; for (i = 2; i <= NF; i++) total += $i; t[NR] = total; d[NR] = idle }
     END { dt = t[2] - t[1]; if (dt > 0) printf "cpu=%.1f\n", 100 * (dt - (d[2] - d[1])) / dt }'
   awk '/^MemTotal:/ { t = $2 } /^MemAvailable:/ { a = $2 } END { printf "mem_total=%d\nmem_used=%d\n", t, t - a }' /proc/meminfo
-  roots="/ $HOME /workplace /local"
+  # Every real local disk bigger than 4 GB, whatever it's mounted as.
+  df -Pk -l -x tmpfs -x devtmpfs -x overlay -x squashfs -x efivarfs 2>/dev/null |
+    awk 'NR > 1 && $2 > 4194304 && !seen[$6]++ { print "disk=" $6 "|" $2 "|" $3 }'
+  roots=""
 else
   boot=$(sysctl -n kern.boottime | sed 's/^{ sec = \([0-9]*\).*/\1/')
   echo "uptime=$(( $(date +%s) - boot ))"

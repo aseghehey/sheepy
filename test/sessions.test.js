@@ -26,7 +26,7 @@ test("status words", () => {
 
 test("a session's name is its title, never a path or the program", () => {
   assert.equal(sessionTitle(term("t", { title: "✳ Fix the login" })), "Fix the login");
-  assert.equal(sessionTitle(term("t", { title: "~/workplace/dms" })), "dms");
+  assert.equal(sessionTitle(term("t", { title: "~/projects/dms" })), "dms");
   assert.equal(sessionTitle(term("t", { title: "Claude Code" })), "dms");
   assert.equal(sessionTitle(term("t", { title: null, foreground: null, cwd: "/a/b" })), "b");
 });
@@ -112,7 +112,7 @@ import { agentOf, hosts, AGENTS } from "../src/lib/sessions.js";
 
 test("Claude Code, Codex and Kiro terminals are all agents", () => {
   assert.equal(agentOf(term("t", { foreground: { name: "codex", argv: ["codex"] }, agent: null, status: null })), "codex");
-  assert.equal(agentOf(term("t", { foreground: { name: "kiro-cli", argv: ["/home/me/.toolbox/bin/kiro-cli", "chat"] }, agent: null, status: null })), "kiro");
+  assert.equal(agentOf(term("t", { foreground: { name: "kiro-cli", argv: ["/home/me/.local/bin/kiro-cli", "chat"] }, agent: null, status: null })), "kiro");
   assert.equal(agentOf(term("t")), "claude");
   assert.equal(agentOf({ state: "live", foreground: { name: "zsh" } }), null);
   assert.equal(agentOf(term("t", { state: "exited" })), null);
