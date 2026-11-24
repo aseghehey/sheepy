@@ -49,7 +49,7 @@ export function Health({ s }: { s: Stats | { error: string } | undefined }) {
   if ("error" in s) return <div className="health hint">Couldn't read it</div>;
   const mem = s.mem_total > 0 ? (100 * s.mem_used) / s.mem_total : null;
   const row = (label: string, pct: number, title?: string) => (
-    <div className="stat" title={title}><span>{label}</span><Bar pct={pct} /><span className="v">{Math.round(pct)}%</span></div>
+    <div key={label} className="stat" title={title}><span>{label}</span><Bar pct={pct} /><span className="v">{Math.round(pct)}%</span></div>
   );
   return (
     <div className="health">

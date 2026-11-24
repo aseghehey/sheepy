@@ -30,7 +30,8 @@ fn watch_terminals(app: AppHandle) {
             match child {
                 Ok(mut child) => {
                     let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
-                    while let Ok(Some(line)) = lines.next_line().await {
+                    // Silent for five minutes: start it again (it may have stopped delivering).
+                    while let Ok(Ok(Some(line))) = tokio::time::timeout(std::time::Duration::from_secs(300), lines.next_line()).await {
                         if let Ok(v) = serde_json::from_str::<Value>(&line) {
                             if v.get("terminals").is_some_and(Value::is_array) {
                                 *app.state::<Latest>().0.lock().unwrap() = Some(v.clone());
@@ -49,13 +50,9 @@ fn watch_terminals(app: AppHandle) {
     });
 }
 
-/// Everything herdr-core knows now, in full (the same shape as an event):
-/// the latest event's picture, else the first one a fresh `events` sends.
-#[tauri::command]
-async fn terminals(latest: State<'_, Latest>) -> Result<Value, String> {
-    if let Some(v) = latest.0.lock().unwrap().clone() {
-        return Ok(v);
-    }
+/// The first picture a fresh `herdr-core events` sends: everything it knows
+/// now, in full.
+async fn fresh_picture() -> Result<Value, String> {
     let mut child = tokio::process::Command::new(hc::bin())
         .args(["events", "--json"])
         .stdout(std::process::Stdio::piped())
@@ -71,6 +68,35 @@ async fn terminals(latest: State<'_, Latest>) -> Result<Value, String> {
         .map_err(|e| e.to_string())?
         .ok_or("herdr-core ended without an answer")?;
     serde_json::from_str(&first).map_err(|e| e.to_string())
+}
+
+/// Every 15 s, the full picture again, whatever the event feed does: a feed
+/// that stops delivering (after a machine's connection dropped, say) left
+/// the window showing old sessions and none of the new.
+fn refresh_terminals(app: AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+            match fresh_picture().await {
+                Ok(v) if v.get("terminals").is_some_and(Value::is_array) => {
+                    *app.state::<Latest>().0.lock().unwrap() = Some(v.clone());
+                    let _ = app.emit("terminals", v);
+                }
+                Ok(_) => {}
+                Err(e) => log::warn!("refreshing the picture: {e}"),
+            }
+        }
+    });
+}
+
+/// Everything herdr-core knows now, in full (the same shape as an event):
+/// the latest event's picture, else the first one a fresh `events` sends.
+#[tauri::command]
+async fn terminals(latest: State<'_, Latest>) -> Result<Value, String> {
+    if let Some(v) = latest.0.lock().unwrap().clone() {
+        return Ok(v);
+    }
+    fresh_picture().await
 }
 
 #[tauri::command]
@@ -224,9 +250,31 @@ async fn machine_stats(machine: Option<String>) -> Result<String, String> {
     if out.ok() { Ok(out.stdout) } else { Err(out.stderr.trim().to_string()) }
 }
 
-/// How Claude Code is started (with the person's flags).
-fn claude_argv() -> Vec<String> {
-    vec!["claude".into(), "--dangerously-skip-permissions".into()]
+/// How Claude Code is started (with the person's flags), on `machine`.
+///
+/// herdr-core runs in the background, without the PATH a login shell sets up
+/// (where installers put claude, ~/.local/bin and the like), so claude is
+/// looked up the way the person's own shell would, once per machine, and
+/// started by its full path.
+async fn claude_argv(machine: Option<&str>) -> Vec<String> {
+    static FOUND: std::sync::OnceLock<Mutex<std::collections::HashMap<String, String>>> = std::sync::OnceLock::new();
+    let cache = FOUND.get_or_init(Default::default);
+    let key = machine.unwrap_or("").to_string();
+    let cached = cache.lock().unwrap().get(&key).cloned();
+    let path = match cached {
+        Some(p) => p,
+        None => {
+            // The answer is marked: a login shell can print other things
+            // first (a terminal's shell integration codes, greetings).
+            let look = r#"p=$(command -v claude 2>/dev/null) || p=$("${SHELL:-/bin/sh}" -lic 'command -v claude' 2>/dev/null | tail -1); printf 'SHEEPY-PATH:%s\n' "$p""#;
+            let found = hc::sh(machine, look, &[], 20).await.ok().and_then(|o| claude_path(&o.stdout));
+            match found {
+                Some(p) => { cache.lock().unwrap().insert(key, p.clone()); p }
+                None => "claude".into(),
+            }
+        }
+    };
+    vec![path, "--dangerously-skip-permissions".into()]
 }
 
 /// The hosts in ~/.ssh/config (and the files it includes) a new session can
@@ -261,7 +309,9 @@ fn ssh_hosts() -> Vec<String> {
 /// What `herdr-core run --json` answered: the new terminal's address, or its
 /// error in plain words (`{"error": {"kind", "message", "hint"}}`).
 fn started(out: &hc::Out, machine: Option<&str>, folder: Option<&str>) -> Result<String, String> {
-    let v: Value = serde_json::from_str(out.stdout.trim()).unwrap_or(Value::Null);
+    let v: Value = serde_json::from_str(out.stdout.trim())
+        .or_else(|_| serde_json::from_str(out.stderr.trim()))
+        .unwrap_or(Value::Null);
     if let Some(a) = v.get("address").and_then(Value::as_str) {
         return Ok(a.to_string());
     }
@@ -279,24 +329,58 @@ fn started(out: &hc::Out, machine: Option<&str>, folder: Option<&str>) -> Result
     } else {
         out.stderr.trim().lines().last().unwrap_or("couldn't start it").to_string()
     };
-    log::warn!("starting a session on {host} failed: {text} ({})", out.stdout.trim());
+    log::warn!("starting a session on {host} failed: {text} (stdout: {}; stderr: {})", out.stdout.trim(), out.stderr.trim());
     Err(text)
 }
 
 /// Ends a session: its program (Claude Code), then its terminal. Its log
 /// stays, so it can be resumed later (Archived).
+///
+/// A terminal started with --keep (as Sheepy starts sessions) gets a shell
+/// in place of a program that ends, and only a finished terminal can be
+/// removed: so keep goes off first, and removing waits for it to finish.
 #[tauri::command]
 async fn close_session(address: String) -> Result<(), String> {
+    let _ = hc::run(&["keep", &address, "--off"]).await;
     let kill = hc::run(&["kill", &address]).await?;
+    let mut finished = false;
+    for _ in 0..30 {
+        let got = hc::run(&["get", &address, "--json"]).await?;
+        let state = serde_json::from_str::<Value>(got.stdout.trim()).ok()
+            .and_then(|v| v.get("state").and_then(Value::as_str).map(String::from));
+        // Gone already, or no longer running.
+        if !got.ok() || state.as_deref().is_some_and(|s| s != "live") {
+            finished = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
     let rm = hc::run(&["rm", &address]).await?;
-    log::info!("closed {address} (kill: {}, rm: {})", kill.code, rm.code);
-    if rm.ok() || kill.ok() { Ok(()) } else { Err(rm.stderr.trim().to_string()) }
+    let gone = rm.ok() || core_error(&rm).contains("no terminal");
+    log::info!("closing {address}: kill {}, finished {finished}, rm {}", kill.code, rm.code);
+    if gone {
+        Ok(())
+    } else {
+        let e = core_error(&rm);
+        log::warn!("closing {address} failed: {e}");
+        Err(format!("Couldn't close it: {e}"))
+    }
 }
 
 /// Where Sheepy writes its log.
 #[tauri::command]
 fn log_dir(app: AppHandle) -> Result<String, String> {
     app.path().app_log_dir().map(|p| p.to_string_lossy().into_owned()).map_err(|e| e.to_string())
+}
+
+/// The path in the lookup's marked answer: what follows "SHEEPY-PATH:", from
+/// its last "/" run that starts a path (escape codes before it dropped).
+fn claude_path(out: &str) -> Option<String> {
+    let line = out.lines().rev().find_map(|l| l.split_once("SHEEPY-PATH:").map(|(_, p)| p))?;
+    let line = line.rsplit(['\x07', '\x1b']).next().unwrap_or(line).trim();
+    let start = line.find('/')?;
+    let path = &line[start..];
+    (path.ends_with("/claude") && !path.contains(char::is_whitespace)).then(|| path.to_string())
 }
 
 /// Resumes a session that isn't running: Claude Code with --resume, in its
@@ -316,7 +400,7 @@ async fn resume(machine: Option<String>, project: String, session: String, title
         args.extend(["--on".into(), m.clone()]);
     }
     args.extend(["--label".into(), where_label, "--".into()]);
-    args.extend(claude_argv());
+    args.extend(claude_argv(machine.as_deref()).await);
     args.extend(["--resume".into(), session]);
     let refs: Vec<&str> = args.iter().map(String::as_str).collect();
     let out = hc::run(&refs).await?;
@@ -358,7 +442,10 @@ async fn new_session(machine: Option<String>, folder: Option<String>, group: Opt
         }
     }
     let mut args: Vec<String> = vec!["run".into(), "--bg".into(), "--json".into(), "--no-parent".into(), "--keep".into()];
-    let folder = folder.map(|f| f.trim().to_string()).filter(|f| !f.is_empty());
+    // No folder: the home folder (on another machine herdr-core starts there;
+    // on this one it would start where herdr-core itself runs, "/").
+    let folder = folder.map(|f| f.trim().to_string()).filter(|f| !f.is_empty())
+        .or_else(|| if machine.is_none() { std::env::var("HOME").ok() } else { None });
     if let Some(f) = &folder {
         if f.starts_with('-') {
             return Err("not a folder".into());
@@ -372,12 +459,61 @@ async fn new_session(machine: Option<String>, folder: Option<String>, group: Opt
         args.extend(["--label".into(), format!("sheepy.group={}", g.chars().take(60).collect::<String>())]);
     }
     args.push("--".into());
-    args.extend(claude_argv());
+    args.extend(claude_argv(machine.as_deref()).await);
     let refs: Vec<&str> = args.iter().map(String::as_str).collect();
     let out = hc::run(&refs).await?;
     let address = started(&out, machine.as_deref(), folder.as_deref())?;
     log::info!("started {address} on {} in {}", machine.as_deref().unwrap_or("this computer"), folder.as_deref().unwrap_or("~"));
+    tauri::async_runtime::spawn(trust_folder(address.clone()));
     Ok(address)
+}
+
+/// Claude Code asks whether to trust a folder the first time it starts in
+/// it. For a session Sheepy started, the person chose the folder: answer Yes.
+/// Watches for the question for 30 s, and acts only on that exact menu.
+async fn trust_folder(address: String) {
+    for _ in 0..60 {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        let Ok(got) = hc::run(&["get", &address, "--json"]).await else { return };
+        let Ok(t) = serde_json::from_str::<Value>(got.stdout.trim()) else { return };
+        if t.get("state").and_then(Value::as_str) != Some("live") {
+            return;
+        }
+        let status = t.get("status").cloned().unwrap_or(Value::Null);
+        let asking = status.get("state").and_then(Value::as_str) == Some("blocked")
+            && status.get("msg").and_then(Value::as_str).is_some_and(|m| m.contains("trust"));
+        if !asking {
+            // Working, or waiting at its prompt: past the question (or never asked).
+            if status.get("state").and_then(Value::as_str).is_some_and(|s| s == "working" || s == "done" || s == "idle") {
+                return;
+            }
+            continue;
+        }
+        let Ok(screen) = hc::run(&["read", &address, "--lines", "30"]).await else { return };
+        if let Some(keys) = trust_keys(&screen.stdout) {
+            let mut args = vec!["keys", address.as_str()];
+            args.extend(keys.iter().map(String::as_str));
+            let r = hc::run(&args).await;
+            log::info!("{address}: trusted its folder ({})", r.map(|o| o.code).unwrap_or(-1));
+        }
+        return;
+    }
+}
+
+/// The keys that answer Claude Code's trust question with "Yes, I trust this
+/// folder": from the selected option (❯) down or up to it, then Enter. None
+/// when the screen isn't that menu.
+fn trust_keys(screen: &str) -> Option<Vec<String>> {
+    let options: Vec<&str> = screen.lines().map(str::trim).filter(|l| {
+        let l = l.trim_start_matches('❯').trim();
+        l.starts_with("No, exit") || l.starts_with("Yes, I trust this folder") || l.starts_with("Yes, proceed")
+    }).collect();
+    let yes = options.iter().position(|l| l.trim_start_matches('❯').trim().starts_with("Yes"))?;
+    let at = options.iter().position(|l| l.starts_with('❯'))?;
+    let step = if yes > at { "down" } else { "up" };
+    let mut keys: Vec<String> = std::iter::repeat_n(step.to_string(), yes.abs_diff(at)).collect();
+    keys.push("enter".into());
+    Some(keys)
 }
 
 /// Development only: a screenshot of the window on request, without the
@@ -392,6 +528,12 @@ fn watch_snapshot_requests(app: AppHandle) {
             if request.exists() {
                 let _ = std::fs::remove_file(request);
                 let _ = app.emit("snapshot", ());
+            }
+            // /tmp/sheepy-open.request holding a terminal address opens it.
+            let open = std::path::Path::new("/tmp/sheepy-open.request");
+            if let Ok(address) = std::fs::read_to_string(open) {
+                let _ = std::fs::remove_file(open);
+                let _ = app.emit("dev-open", address.trim().to_string());
             }
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         }
@@ -431,6 +573,7 @@ pub fn run() {
         .manage(Latest::default())
         .setup(|app| {
             watch_terminals(app.handle().clone());
+            refresh_terminals(app.handle().clone());
             #[cfg(debug_assertions)]
             watch_snapshot_requests(app.handle().clone());
             let _ = app.get_webview_window("main");
@@ -474,6 +617,30 @@ mod tests {
             "There's no folder /Volumes/x on vps (or Claude Code isn't installed there)."
         );
         assert_eq!(started(&o, None, None).unwrap_err(), "Claude Code isn't installed on this computer (claude wasn't found).");
+    }
+
+    #[test]
+    fn the_trust_question_is_answered_yes() {
+        let screen = " Accessing workspace:\n\n /\n\n Quick safety check: Is this a project you created or one you trust?\n\n ❯ No, exit\n   Yes, I trust this folder\n\n Enter to confirm · Esc to cancel\n";
+        assert_eq!(trust_keys(screen), Some(vec!["down".to_string(), "enter".to_string()]));
+        let already = " ❯ Yes, I trust this folder\n   No, exit\n";
+        assert_eq!(trust_keys(already), Some(vec!["enter".to_string()]));
+        assert_eq!(trust_keys("❯ 1. Pin it\n  2. Approve\n"), None, "another menu: nothing pressed");
+    }
+
+    #[test]
+    fn claude_is_found_in_a_login_shells_noisy_answer() {
+        assert_eq!(claude_path("SHEEPY-PATH:/home/me/.local/bin/claude\n").as_deref(), Some("/home/me/.local/bin/claude"));
+        let noisy = "SHEEPY-PATH:\x1b]1337;RemoteHost=me@mac\x07\x1b]1337;CurrentDir=/Users/me\x07/Users/me/.local/bin/claude\n";
+        assert_eq!(claude_path(noisy).as_deref(), Some("/Users/me/.local/bin/claude"));
+        assert_eq!(claude_path("SHEEPY-PATH:\n"), None);
+        assert_eq!(claude_path("nothing marked"), None);
+    }
+
+    #[test]
+    fn an_error_printed_on_stderr_is_read_too() {
+        let o = hc::Out { code: 1, stdout: String::new(), stderr: r#"{"error":{"kind":"spawn_failed","message":"cannot start \"claude\": No such file or directory (os error 2)"}}"#.into() };
+        assert_eq!(started(&o, None, Some("/Users/me")).unwrap_err(), "There's no folder /Users/me on this computer (or Claude Code isn't installed there).");
     }
 
     #[test]

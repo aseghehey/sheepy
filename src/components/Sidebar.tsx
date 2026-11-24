@@ -74,14 +74,17 @@ function SubAgents({ session, file, target, onSelect }: { session: Session; file
 const folderKey = (machine: string) => `new.folder:${machine || "local"}`;
 const lastFolder = (machine: string | null) => localStorage.getItem(folderKey(machine ?? "")) ?? "";
 
-function NewSession({ hosts, initial, folders, onDone, onStarted }: {
+function NewSession({ hosts, initial, folders, groups, onDone, onStarted }: {
   hosts: string[]; initial: { machine: string | null; folder: string; group: string };
-  folders: (machine: string | null) => string[];
+  folders: (machine: string | null) => string[]; groups: (machine: string | null) => string[];
   onDone: () => void; onStarted: (address: string, title: string) => void;
 }) {
   const [machine, setMachine] = useState<string>(initial.machine ?? "");
   const [folder, setFolder] = useState(initial.folder || lastFolder(initial.machine));
   const [group, setGroup] = useState(initial.group);
+  // A group of the host's, or a new one typed in.
+  const [newGroup, setNewGroup] = useState(false);
+  const existing = groups(machine || null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const start = async () => {
@@ -108,7 +111,22 @@ function NewSession({ hosts, initial, folders, onDone, onStarted }: {
         <input autoFocus value={folder} placeholder="~ (home)" spellCheck={false} list="folders" onChange={(e) => setFolder(e.target.value)} />
         <datalist id="folders">{folders(machine || null).map((f) => <option key={f} value={f} />)}</datalist>
       </label>
-      <label>Group<input value={group} placeholder="(none)" onChange={(e) => setGroup(e.target.value)} /></label>
+      <label>Group
+        {newGroup ? (
+          <span className="inline">
+            <input autoFocus value={group} placeholder="Name the new group" onChange={(e) => setGroup(e.target.value)} />
+            <button type="button" className="link" onClick={() => { setNewGroup(false); setGroup(""); }}>Cancel</button>
+          </span>
+        ) : (
+          <select value={existing.includes(group) ? group : ""} onChange={(e) => {
+            if (e.target.value === "\u0000new") { setNewGroup(true); setGroup(""); } else setGroup(e.target.value);
+          }}>
+            <option value="">Ungrouped</option>
+            {existing.filter((g) => g !== "Ungrouped").map((g) => <option key={g} value={g}>{g}</option>)}
+            <option value={"\u0000new"}>New group…</option>
+          </select>
+        )}
+      </label>
       {error && <div className="banner">{error}</div>}
       <div className="form-actions">
         <button type="button" onClick={onDone}>Cancel</button>
@@ -120,9 +138,9 @@ function NewSession({ hosts, initial, folders, onDone, onStarted }: {
 
 interface Host { id: string; name: string; machine: string | null; status: string; groups: Win[] }
 
-export function Sidebar({ hosts, target, logs, onSelect, error, machines }: {
+export function Sidebar({ hosts, target, logs, onSelect, onClosed, error, machines }: {
   hosts: Host[]; target: Target | null; logs: Record<string, string>; onSelect: (t: Target) => void;
-  error: string | null; machines: { name: string; state: string }[];
+  onClosed: (addresses: string[]) => void; error: string | null; machines: { name: string; state: string }[];
 }) {
   const [folded, toggle] = useFolded();
   const down = machines.filter((m) => m.state !== "connected");
@@ -155,10 +173,11 @@ export function Sidebar({ hosts, target, logs, onSelect, error, machines }: {
     body: `${list.length === 1 ? "Its Claude Code session ends" : `${list.length} Claude Code sessions end`} and ${list.length === 1 ? "its terminal is" : "their terminals are"} removed. The conversation stays in its log: you can resume it from Archived (⌘⇧F).`,
     action: list.length === 1 ? "Close session" : `Close ${list.length} sessions`,
     run: async () => {
-      try {
-        await Promise.all(list.map((s) => core.closeSession(s.address)));
-        setMoveError(null);
-      } catch (e) { setMoveError(String(e)); }
+      const results = await Promise.allSettled(list.map((s) => core.closeSession(s.address)));
+      const closed = list.filter((_, i) => results[i].status === "fulfilled").map((s) => s.address);
+      const failed = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
+      onClosed(closed);
+      setMoveError(failed.length ? `${failed.length} of ${list.length} didn't close: ${String(failed[0].reason)}` : null);
     },
   });
   // From the command palette: close the open session, or its whole group.
@@ -247,7 +266,9 @@ export function Sidebar({ hosts, target, logs, onSelect, error, machines }: {
       {moveError && <div className="banner">{moveError}</div>}
       {down.map((m) => <div key={m.name} className="banner">{m.name} is {m.state}</div>)}
       {starting && (
-        <NewSession hosts={choices} initial={starting} folders={folders} onDone={() => setStarting(null)}
+        <NewSession hosts={choices} initial={starting} folders={folders}
+          groups={(m) => hosts.filter((h) => h.machine === m).flatMap((h) => h.groups.map((g) => g.name))}
+          onDone={() => setStarting(null)}
           onStarted={(address, title) => onSelect({ kind: "session", address, title })} />
       )}
       <div className="sidebar-list">

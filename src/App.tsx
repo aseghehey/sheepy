@@ -50,6 +50,13 @@ export default function App() {
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
   }, []);
+  // Development only: open a session on request (see watch_snapshot_requests).
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const off = import("@tauri-apps/api/event").then((ev) => ev.listen<string>("dev-open", (e) => setTarget({ kind: "session", address: e.payload, title: e.payload })));
+    return () => { off.then((u) => u()); };
+  }, []);
+
   // A newer Sheepy was installed while this one runs: offer to restart into it.
   const [newer, setNewer] = useState(false);
   useEffect(() => {
@@ -82,6 +89,7 @@ export default function App() {
         target={target}
         logs={logs}
         onSelect={setTarget}
+        onClosed={(addresses) => setTarget((t) => (t && addresses.includes(t.address) ? null : t))}
         error={coreError}
         machines={machines}
       />
