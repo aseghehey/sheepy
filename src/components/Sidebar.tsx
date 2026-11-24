@@ -118,7 +118,9 @@ export function Sidebar({ hosts, target, logs, onSelect, error, machines }: {
   const down = machines.filter((m) => m.state !== "connected");
   const stateOf = (name: string | null) => (name === null ? "connected" : machines.find((m) => m.name === name)?.state ?? "unknown");
   const health = useHealth(hosts.filter((h) => stateOf(h.machine) === "connected").map((h) => h.machine));
-  const [hoverHost, setHoverHost] = useState<string | null>(null);
+  // The health card beside a host's name, placed in the window (the list
+  // scrolls and clips what sticks out of it).
+  const [hoverHost, setHoverHost] = useState<{ id: string; x: number; y: number } | null>(null);
   const [sshHosts, setSshHosts] = useState<string[]>([]);
   useEffect(() => { core.sshHosts().then(setSshHosts).catch(() => {}); }, []);
   const choices = [...new Set([...machines.map((m) => m.name), ...sshHosts])].sort();
@@ -216,7 +218,9 @@ export function Sidebar({ hosts, target, logs, onSelect, error, machines }: {
           const st = stateOf(h.machine);
           return (
             <div key={h.id} className="host">
-              <div className="host-head" onMouseEnter={() => setHoverHost(h.id)} onMouseLeave={() => setHoverHost((x) => (x === h.id ? null : x))}>
+              <div className="host-head"
+                onMouseEnter={(e) => { const r = e.currentTarget.getBoundingClientRect(); setHoverHost({ id: h.id, x: r.right + 10, y: r.top }); }}
+                onMouseLeave={() => setHoverHost((x) => (x?.id === h.id ? null : x))}>
                 <button className="host-toggle" onClick={() => toggle(h.id)}>
                   <span className={`chev ${open ? "open" : ""}`}>›</span>
                   <span className={`dot ${st === "connected" ? "dot-done" : st === "connecting" ? "dot-working" : "dot-blocked"}`} />
@@ -225,8 +229,10 @@ export function Sidebar({ hosts, target, logs, onSelect, error, machines }: {
                 </button>
                 <button className="add" title={`New session on ${h.name}`}
                   onClick={() => setStarting({ machine: h.machine, folder: "", group: "" })}>+</button>
-                {hoverHost === h.id && st === "connected" && (
-                  <div className="health-card"><div className="health-title">{h.name}</div><Health s={health[h.machine ?? ""] as any} /></div>
+                {hoverHost?.id === h.id && st === "connected" && (
+                  <div className="health-card" style={{ position: "fixed", left: hoverHost.x, top: Math.min(hoverHost.y, window.innerHeight - 220) }}>
+                    <div className="health-title">{h.name}</div><Health s={health[h.machine ?? ""] as any} />
+                  </div>
                 )}
               </div>
               {open && h.groups.map((w) => group(h, w))}

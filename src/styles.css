@@ -314,5 +314,5 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 .cmd.on { background: var(--selected); }
 .cmd .keys { color: var(--dim); font-size: 12px; flex: none; }
 .host-head { position: relative; }
-.host-head .health-card { left: calc(100% + 10px); top: 0; bottom: auto; margin-left: 0; }
+.host-head .health-card { margin-left: 0; z-index: 60; pointer-events: none; }
 .add-machine { padding: 4px 8px; font-size: 12.5px; }

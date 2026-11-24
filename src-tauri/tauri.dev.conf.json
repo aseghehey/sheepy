@@ -1,0 +1,21 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Sheepy Dev",
+  "identifier": "dev.sheepy.app.dev",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Sheepy Dev",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 720,
+        "minHeight": 480,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "resizable": true,
+        "dragDropEnabled": false
+      }
+    ]
+  }
+}

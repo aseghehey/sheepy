@@ -29,10 +29,18 @@ dictation, accessibility.
 
 ## Develop
 
+Two builds, side by side, each with its own settings:
+
 ```sh
 npm install
-npm run tauri dev
+npm run app:dev      # "Sheepy Dev": reloads as you edit; may break while you work
+npm run app:stable   # "Sheepy" in /Applications, built from what's committed
 ```
+
+The stable build comes from a committed revision (HEAD, or a tag, branch or
+commit: `npm run app:stable -- <ref>`) in a temporary clean checkout, so
+uncommitted work can't reach it. Use it day to day; update it when a change
+is committed and works in Sheepy Dev.
 
 Needs herdr-core (`~/.local/bin/herdr-core`) and, for live logs, herdr-search
 on each machine (`~/.local/share/herdr-search/bin/herdr-search`).
