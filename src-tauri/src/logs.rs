@@ -118,13 +118,18 @@ pub struct Follows(pub Mutex<HashMap<String, JoinHandle<()>>>);
 
 /// Reads `file` from its end, then follows it: "log" events carry
 /// { id, lines: [{ at, line }], from, to, first, reset, truncated, error }.
-pub fn follow(app: AppHandle, follows: &Follows, id: String, on: Option<String>, file: String) {
+/// `plain`: read the file itself, not through herdr-search, whose pages leave
+/// out side-chain lines — every line of a sub-agent's own log is one.
+pub fn follow(app: AppHandle, follows: &Follows, id: String, on: Option<String>, file: String, plain: bool) {
     let task_id = id.clone();
     let handle = tauri::async_runtime::spawn(async move {
         let emit = |v: Value| {
             let _ = app.emit("log", v);
         };
         let on = on.as_deref();
+        if plain {
+            return plain_tail(&emit, &task_id, on, &file).await;
+        }
         let tail = TAIL_BYTES.to_string();
         loop {
             // The end of the log first.

@@ -1,11 +1,13 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { core } from "../lib/core";
+import { annotationMessage } from "../lib/anno.js";
+import type { Anno } from "./Annotations";
 
 // The message box: Enter sends, Shift+Enter starts a new line, Escape (or
 // Stop) interrupts a working agent. What's typed and not sent is kept per
 // session. It's a plain text area: the Mac's own editing, spelling, Look Up,
 // Services and right-click menu come with it.
-export function Composer({ address, working }: { address: string; working: boolean }) {
+export function Composer({ address, working, annos = [], onSentAnnos }: { address: string; working: boolean; annos?: Anno[]; onSentAnnos?: () => void }) {
   const key = `draft:${address}`;
   const [text, setText] = useState(() => localStorage.getItem(key) ?? "");
   const [error, setError] = useState<string | null>(null);
@@ -28,13 +30,15 @@ export function Composer({ address, working }: { address: string; working: boole
   useEffect(() => { box.current?.focus(); }, [address]);
 
   const send = async () => {
-    const message = text.trim();
+    // Queued annotations go with it: each quote and its comment, then what's typed.
+    const message = annos.length ? annotationMessage(annos, text) : text.trim();
     if (!message || sending) return;
     setSending(true);
     setError(null);
     try {
       await core.send(address, message);
       setText("");
+      if (annos.length) onSentAnnos?.();
     } catch (e) {
       setError(String(e));
     } finally {
@@ -62,10 +66,10 @@ export function Composer({ address, working }: { address: string; working: boole
             else if (e.key === "Escape" && working) { e.preventDefault(); stop(); }
           }}
         />
-        {working && !text.trim() ? (
+        {working && !text.trim() && !annos.length ? (
           <button className="send stop" title="Stop (Esc)" onClick={stop}>■</button>
         ) : (
-          <button className="send" title="Send (Enter)" disabled={!text.trim() || sending} onClick={send}>↑</button>
+          <button className="send" title="Send (Enter)" disabled={(!text.trim() && !annos.length) || sending} onClick={send}>↑</button>
         )}
       </div>
     </div>

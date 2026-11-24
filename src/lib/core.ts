@@ -47,10 +47,17 @@ export const core = {
   page: (machine: string | null, file: string, from: number, to: number) =>
     invoke<{ lines: LogLine[]; from: number; to: number }>("page", { machine, file, from, to }),
   search: (machine: string | null, args: string[]) => invoke<any>("search", { machine, args }),
-  follow: (id: string, machine: string | null, file: string) => invoke<void>("follow", { id, machine, file }),
+  follow: (id: string, machine: string | null, file: string, plain = false) => invoke<void>("follow", { id, machine, file, plain }),
   unfollow: (id: string) => invoke<void>("unfollow", { id }),
   machines: () => invoke<{ machines: Machine[] }>("machines"),
   machineAdd: (target: string, name?: string) => invoke<unknown>("machine_add", { target, name: name ?? null }),
+  resume: (machine: string | null, project: string, session: string, title?: string) =>
+    invoke<string>("resume", { machine, project, session, title: title ?? null }),
+  machineStats: (machine: string | null) => invoke<string>("machine_stats", { machine }),
+  setGroup: (address: string, group: string) => invoke<void>("set_group", { address, group }),
+  newSession: (machine: string | null, folder: string | null, group: string | null) =>
+    invoke<string>("new_session", { machine, folder, group }),
+  sshHosts: () => invoke<string[]>("ssh_hosts"),
   onTerminals: (fn: (f: Facts) => void): Promise<UnlistenFn> => listen<Facts>("terminals", (e) => fn(e.payload)),
   onLog: (fn: (e: LogEvent) => void): Promise<UnlistenFn> => listen<LogEvent>("log", (e) => fn(e.payload)),
 };

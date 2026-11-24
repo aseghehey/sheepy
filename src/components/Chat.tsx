@@ -7,6 +7,11 @@ import { Markdown } from "./Markdown";
 import { Composer } from "./Composer";
 import { QuestionCard } from "./QuestionCard";
 import { StatusDot, type Target } from "./Sidebar";
+import { ViewMenu, type View } from "./ViewMenu";
+import { viewStyle } from "../lib/view.js";
+import { QuoteLayer, AnnotationTray, useAnnotations } from "./Annotations";
+import { findEntries, queryWords, step } from "../lib/findin.js";
+import { markWords } from "../lib/find.js";
 
 type Entry = any;
 
@@ -29,7 +34,7 @@ function useTranscript(id: string, machine: string | null, file: string | null, 
       else setState((s) => (s.error ? { ...s, error: null } : s));
       setVersion((v) => v + 1);
     });
-    core.follow(id, machine, file).catch((err) => setState((s) => ({ ...s, loading: false, error: String(err) })));
+    core.follow(id, machine, file, sidechain).catch((err) => setState((s) => ({ ...s, loading: false, error: String(err) })));
     return () => { alive = false; off.then((u) => u()); core.unfollow(id); };
   }, [id, machine, file, sidechain]);
   return { transcript: t.current, version, ...state };
@@ -62,19 +67,20 @@ function ToolGroup({ items, subagents, onOpenSubagent }: { items: any[]; subagen
   );
 }
 
-function EntryView({ e, subagents, onOpenSubagent }: { e: Entry; subagents: SubAgent[]; onOpenSubagent: (s: SubAgent) => void }) {
+function EntryView({ e, subagents, onOpenSubagent, words }: { e: Entry; subagents: SubAgent[]; onOpenSubagent: (s: SubAgent) => void; words?: string[] }) {
+  const mark = (t: string) => (words?.length ? markWords(t, words) : t);
   switch (e.kind) {
     case "user":
       return (
         <div className="msg-row mine">
           <div className={`bubble ${e.command ? "command" : ""}`}>
-            {e.text && (e.command ? <code>{e.text}</code> : <Markdown text={e.text} />)}
+            {e.text && (e.command ? <code>{e.text}</code> : <Markdown text={mark(e.text)} />)}
             {(e.images ?? []).map((im: any, i: number) => <img key={i} className="msg-img" src={`data:image/${im.ext ?? "png"};base64,${im.data}`} />)}
           </div>
         </div>
       );
     case "assistant":
-      return <div className="msg-row theirs"><Markdown text={e.text} /></div>;
+      return <div className="msg-row theirs"><Markdown text={mark(e.text)} /></div>;
     case "tools":
       return <ToolGroup items={e.items} subagents={subagents} onOpenSubagent={onOpenSubagent} />;
     case "note":
@@ -88,9 +94,10 @@ function EntryView({ e, subagents, onOpenSubagent }: { e: Entry; subagents: SubA
   }
 }
 
-export function Chat({ target, terminal, onLog, onOpenSubagent }: {
+export function Chat({ target, terminal, onLog, onOpenSubagent, view, setView }: {
   target: Target; terminal: Terminal | null;
   onLog: (address: string, file: string) => void; onOpenSubagent: (t: Target) => void;
+  view: View; setView: (c: Partial<View>) => void;
 }) {
   const machine = machineOf(target.address);
   const isSub = target.kind === "subagent";
@@ -124,35 +131,121 @@ export function Chat({ target, terminal, onLog, onOpenSubagent }: {
   }, [target.address, target.title]);
 
   const list = useRef<VirtuosoHandle>(null);
+  // Entering a conversation: at its latest message. Rows are measured as they
+  // draw, so the end moves for a moment; go there again once it has settled.
+  const landedFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (loading || !entries.length || landedFor.current === file) return;
+    landedFor.current = file;
+    const end = () => list.current?.scrollToIndex({ index: "LAST", align: "end" });
+    // Not cleared when more lines arrive meanwhile (that reruns this effect);
+    // after the chat closes, list.current is null and they do nothing.
+    [50, 250, 700].forEach((ms) => setTimeout(end, ms));
+  }, [loading, entries.length, file]);
   const [atBottom, setAtBottom] = useState(true);
   const status = terminal ? statusOf(terminal) : "idle";
   const title = isSub ? target.title : (transcript?.title ?? target.title);
 
+  // Find in the conversation (⌘F): every entry with all the words; Enter goes
+  // to the previous (older) match, Shift+Enter to the next.
+  const [finding, setFinding] = useState(false);
+  const [query, setQuery] = useState("");
+  const [hit, setHit] = useState(-1);
+  const findBox = useRef<HTMLInputElement>(null);
+  const hits: number[] = useMemo(() => (finding ? findEntries(entries, query) : []), [finding, query, entries]);
+  const words: string[] = useMemo(() => (finding ? queryWords(query) : []), [finding, query]);
+  useEffect(() => { setHit(-1); }, [query]);
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      if (e.metaKey && !e.shiftKey && e.key.toLowerCase() === "f") { e.preventDefault(); setFinding(true); setTimeout(() => findBox.current?.select(), 0); }
+      else if (e.metaKey && e.key === "g") { e.preventDefault(); go(e.shiftKey ? 1 : -1); }
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  });
+  const go = (dir: number) => {
+    const next = step(hits, hit, dir);
+    setHit(next);
+    if (next >= 0) list.current?.scrollToIndex({ index: hits[next], align: "center", behavior: "smooth" });
+  };
+  const notes = useAnnotations(target.address);
+  const conv = useRef<HTMLDivElement>(null);
+
+  // Renaming the session: Claude Code's /rename keeps the name in its log (so
+  // search and its own resume list show it). Not while the agent shows a
+  // menu, where the typed keys would pick an option.
+  const [renaming, setRenaming] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [renameError, setRenameError] = useState<string | null>(null);
+  const rename = async () => {
+    const name = newName.replace(/\s+/g, " ").trim();
+    setRenaming(false);
+    if (!name || name === title) return;
+    if (status === "blocked") return setRenameError("The agent is waiting for an answer; rename the session once it has one.");
+    try {
+      await core.send(target.address, `/rename ${name}`);
+      setRenameError(null);
+      if (transcript) { transcript.title = name; transcript.named = true; }
+    } catch (e) { setRenameError(String(e)); }
+  };
+
   return (
-    <div className="chat">
-      <header className="chat-head">
+    <div className="chat" style={viewStyle(view) as React.CSSProperties}>
+      <header className="chat-head" data-tauri-drag-region>
         {isSub ? (
           <button className="back" onClick={() => onOpenSubagent({ kind: "session", address: target.address, title: target.parentTitle })}>‹ {target.parentTitle}</button>
         ) : <StatusDot status={status} />}
-        <div className="chat-title">{title}</div>
-        <div className="chat-sub">{isSub ? "sub-agent" : [machine ?? "this computer", terminal?.foreground?.cwd?.replace(/^\/(local\/)?home\/[^/]+/, "~")].filter(Boolean).join(" · ")}</div>
+        {renaming ? (
+          <input className="rename" autoFocus value={newName} onChange={(e) => setNewName(e.target.value)}
+            onBlur={() => setRenaming(false)}
+            onKeyDown={(e) => { if (e.key === "Enter") rename(); else if (e.key === "Escape") setRenaming(false); }} />
+        ) : (
+          <div className={`chat-title ${isSub ? "" : "editable"}`} title={isSub ? undefined : "Double-click to rename the session"}
+            onDoubleClick={() => { if (!isSub) { setNewName(title); setRenaming(true); } }}>{title}</div>
+        )}
+        <div className="chat-sub" style={{ flex: 1 }}>{isSub ? "sub-agent" : [machine ?? "this computer", terminal?.foreground?.cwd?.replace(/^\/(local\/)?home\/[^/]+/, "~")].filter(Boolean).join(" · ")}</div>
+        <button className={`head-btn ${finding ? "on" : ""}`} title="Find in this conversation (⌘F)" onClick={() => { setFinding(!finding); setTimeout(() => findBox.current?.focus(), 0); }}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
+        </button>
+        <ViewMenu view={view} setView={setView} />
       </header>
-      <div className="conversation">
-        {(locateError || error) && <div className="banner">{error ?? locateError}</div>}
+      {finding && (
+        <div className="find-bar">
+          <input ref={findBox} autoFocus value={query} placeholder="Find in this conversation" spellCheck={false}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") { e.preventDefault(); go(e.shiftKey ? 1 : -1); }
+              else if (e.key === "Escape") { e.preventDefault(); setFinding(false); setQuery(""); }
+            }} />
+          <span className="find-count">{query.trim() ? (hits.length ? `${hit >= 0 ? hit + 1 : "–"} of ${hits.length}` : "No matches") : ""}</span>
+          <button onClick={() => go(-1)} title="Previous (Enter)" disabled={!hits.length}>↑</button>
+          <button onClick={() => go(1)} title="Next (Shift+Enter)" disabled={!hits.length}>↓</button>
+          <button onClick={() => { setFinding(false); setQuery(""); }} title="Close (Esc)">Done</button>
+          {truncated && <span className="find-note">Searches what's loaded</span>}
+        </div>
+      )}
+      <div className="conversation" ref={conv}>
+        {!isSub && <QuoteLayer root={conv} onAdd={notes.add} />}
+        {(locateError || error || renameError) && <div className="banner">{error ?? locateError ?? renameError}</div>}
         {loading && file && <div className="hint center">Loading…</div>}
-        <Virtuoso
+        {!loading && <Virtuoso
+          key={file ?? "none"}
           ref={list}
           className="virtuoso"
           data={entries}
-          initialTopMostItemIndex={Math.max(0, entries.length - 1)}
+          initialTopMostItemIndex={{ index: "LAST", align: "end" }}
           followOutput={(bottom) => (bottom ? "smooth" : false)}
           atBottomStateChange={setAtBottom}
           atBottomThreshold={80}
           increaseViewportBy={{ top: 800, bottom: 400 }}
           components={{ Header: () => (truncated ? <div className="hint center">Earlier messages aren't loaded.</div> : <div style={{ height: 12 }} />), Footer: () => <div style={{ height: 16 }} /> }}
-          itemContent={(_, e) => <div className="entry"><EntryView e={e} subagents={subagents} onOpenSubagent={openSub} /></div>}
+          itemContent={(i, e) => (
+            <div className={`entry ${hit >= 0 && hits[hit] === i ? "found" : ""}`}>
+              <EntryView e={e} subagents={subagents} onOpenSubagent={openSub} words={hits.includes(i) ? words : undefined} />
+            </div>
+          )}
           computeItemKey={(_, e) => e.key}
-        />
+        />}
         {!atBottom && (
           <button className="to-latest" onClick={() => list.current?.scrollToIndex({ index: entries.length - 1, behavior: "smooth", align: "end" })}>↓ Latest</button>
         )}
@@ -161,7 +254,8 @@ export function Chat({ target, terminal, onLog, onOpenSubagent }: {
         <>
           {status === "working" && <div className="activity"><span className="spinner" /> {activityOf(terminal) ?? "Working…"}</div>}
           {status === "blocked" && <QuestionCard address={target.address} transcript={transcript} version={version} />}
-          <Composer address={target.address} working={status === "working"} />
+          <AnnotationTray {...notes} />
+          <Composer address={target.address} working={status === "working"} annos={notes.annos} onSentAnnos={notes.clear} />
         </>
       )}
       {isSub && <div className="readonly">A sub-agent's conversation, read-only.</div>}

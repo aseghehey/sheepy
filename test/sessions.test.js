@@ -59,3 +59,74 @@ test("sub-agent rows from their metadata", () => {
     { id: "a9d536708fe67e8ab", file: "/x.jsonl", title: "Inventory the reviews", type: "general-purpose", finished: true, toolUseId: "toolu_1", mtime: 5 });
   assert.equal(subagentRow({ id: "abcdef1234", file: "/y", meta: {} }).title, "Agent abcdef1");
 });
+
+import { mergeFacts } from "../src/lib/sessions.js";
+
+test("an update without a terminal list keeps the one from before", () => {
+  const a = mergeFacts(null, { terminals: [{ address: "t1" }], machines: [{ name: "m", state: "connected" }], seq: 1 });
+  const b = mergeFacts(a, { channel: null, seq: 2 });
+  assert.deepEqual(b.terminals, [{ address: "t1" }]);
+  assert.deepEqual(b.machines, [{ name: "m", state: "connected" }]);
+  assert.equal(b.seq, 2);
+  const c = mergeFacts(b, { terminals: null, machines: [{ name: "m", state: "unreachable" }] });
+  assert.deepEqual(c.terminals, [{ address: "t1" }]);
+  assert.equal(c.machines[0].state, "unreachable");
+  assert.deepEqual(mergeFacts(null, null), { terminals: [], machines: [] });
+  assert.deepEqual(mergeFacts(null, "garbage"), { terminals: [], machines: [] });
+});
+
+import { cleanGroup, GROUP_LABEL } from "../src/lib/sessions.js";
+
+test("a session the person moved into a group is listed there on its host, whatever its Herdr window", () => {
+  const list = windows([
+    term("vps/t1", { labels: { where: "dms / Library work", "herdr.tab": "tb1", [GROUP_LABEL]: "  Release   week " } }),
+    term("t2", { labels: { where: "infra / Deploy", "herdr.tab": "tb2", [GROUP_LABEL]: "Release week" } }),
+    term("vps/t3", { labels: { where: "dms / Library work", "herdr.tab": "tb1" } }),
+  ]);
+  assert.deepEqual(list.map((w) => [w.id, w.name, w.own, w.sessions.map((s) => s.address)]), [
+    ["vps:group:Release week", "Release week", true, ["vps/t1"]],
+    ["local:group:Release week", "Release week", true, ["t2"]],
+    ["vps:tb1", "Library work", false, ["vps/t3"]],
+  ]);
+  assert.equal(list[0].machine, "vps", "a group belongs to its host");
+});
+
+test("group names are kept as one tidy line", () => {
+  assert.equal(cleanGroup("  a\n b  "), "a b");
+  assert.equal(cleanGroup("x".repeat(80)).length, 60);
+  assert.equal(cleanGroup(null), "");
+});
+
+test("a group named like a Herdr window joins that window", () => {
+  const list = windows([
+    term("vps/t1", { labels: { where: "dms / Library work", "herdr.tab": "tb1" } }),
+    term("vps/t9", { labels: { [GROUP_LABEL]: "Library work" }, status: { state: "blocked" } }),
+  ]);
+  assert.equal(list.length, 1);
+  assert.equal(list[0].id, "vps:tb1");
+  assert.deepEqual(list[0].sessions.map((s) => s.address), ["vps/t1", "vps/t9"]);
+  assert.equal(list[0].status, "blocked");
+});
+
+import { agentOf, hosts, AGENTS } from "../src/lib/sessions.js";
+
+test("Claude Code, Codex and Kiro terminals are all agents", () => {
+  assert.equal(agentOf(term("t", { foreground: { name: "codex", argv: ["codex"] }, agent: null, status: null })), "codex");
+  assert.equal(agentOf(term("t", { foreground: { name: "kiro-cli", argv: ["/home/me/.toolbox/bin/kiro-cli", "chat"] }, agent: null, status: null })), "kiro");
+  assert.equal(agentOf(term("t")), "claude");
+  assert.equal(agentOf({ state: "live", foreground: { name: "zsh" } }), null);
+  assert.equal(agentOf(term("t", { state: "exited" })), null);
+  assert.deepEqual(AGENTS.claude.argv, ["claude", "--dangerously-skip-permissions"]);
+});
+
+test("groups under their host, this computer first, hosts without sessions listed", () => {
+  const h = hosts([
+    term("vps/t1", { labels: { where: "dms / A", "herdr.tab": "tb1" } }),
+    term("t2", { labels: { where: "x / B", "herdr.tab": "tb2" }, status: { state: "blocked" } }),
+    term("alpha/t3", { labels: { where: "y / C", "herdr.tab": "tb3" } }),
+  ], [{ name: "vps", state: "connected" }, { name: "zeta", state: "unreachable" }]);
+  assert.deepEqual(h.map((x) => [x.name, x.groups.map((g) => g.name)]), [
+    ["This computer", ["B"]], ["alpha", ["C"]], ["vps", ["A"]], ["zeta", []],
+  ]);
+  assert.equal(h[0].status, "blocked");
+});
