@@ -22,6 +22,9 @@ export function QuestionCard({ address, transcript }: { address: string; transcr
   const norm = (x: string) => (x ?? "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
   const question = ask ? (ask.questions.find((x: any) => q && norm(q.question).includes(norm(x.question).slice(0, 40))) ?? ask.questions[0]) : null;
   const keys = (k: string[]) => core.keys(address, k).then(() => setTimeout(() => core.screen(address, 60).then(setScreen), 300));
+  // Only a real question: a menu on the screen, or one the agent asked in the
+  // log that's waiting for its answer. Never the terminal's raw screen.
+  if (!q && !question) return null;
 
   return (
     <div className="question">
@@ -43,7 +46,7 @@ export function QuestionCard({ address, transcript }: { address: string; transcr
             );
           })}
         </div>
-      ) : screen ? <pre className="output">{screen.split("\n").filter((l) => l.trim()).slice(-20).join("\n")}</pre> : null}
+      ) : null}
       <div className="question-keys">
         {!q && <><button onClick={() => keys(["up"])}>↑</button><button onClick={() => keys(["down"])}>↓</button><button onClick={() => keys(["enter"])}>Enter</button></>}
         <button onClick={() => keys(["esc"])}>Esc</button>

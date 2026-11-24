@@ -61,7 +61,7 @@ export function sessionTitle(t) {
 export function whereOf(t) {
   const where = t?.labels?.where ?? t?.where ?? "";
   const [space, tab] = where.includes(" / ") ? where.split(" / ") : [where, ""];
-  return { where, space: space || "Other", tab: tab || space || "Other" };
+  return { where, space: space || "Ungrouped", tab: tab || space || "Ungrouped" };
 }
 
 const RANK = { blocked: 3, working: 2, done: 1, idle: 0 };

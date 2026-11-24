@@ -33,7 +33,7 @@ test("a session's name is its title, never a path or the program", () => {
 
 test("where: space and tab", () => {
   assert.deepEqual(whereOf(term("t")), { where: "dms / Library work", space: "dms", tab: "Library work" });
-  assert.deepEqual(whereOf(term("t", { labels: {} })), { where: "", space: "Other", tab: "Other" });
+  assert.deepEqual(whereOf(term("t", { labels: {} })), { where: "", space: "Ungrouped", tab: "Ungrouped" });
   assert.deepEqual(whereOf(term("t", { labels: { where: "solo" } })), { where: "solo", space: "solo", tab: "solo" });
 });
 

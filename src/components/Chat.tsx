@@ -106,14 +106,25 @@ export function Chat({ target, terminal, onLog, onOpenSubagent, view, setView }:
   // A session's log: found from its Claude Code process (again if that changes).
   const [file, setFile] = useState<string | null>(isSub ? target.file : null);
   const [locateError, setLocateError] = useState<string | null>(null);
+  const [waitingForLog, setWaitingForLog] = useState(false);
   useEffect(() => {
     if (isSub) return setFile(target.file);
     if (!pid) return;
+    // Claude Code writes a session's log with its first message: until then
+    // there's none to find, so look again every two seconds.
     let alive = true;
-    core.locate(target.address, pid)
-      .then((f) => { if (!alive) return; setFile(f); setLocateError(f ? null : "Couldn't find this session's log yet."); if (f) onLog(target.address, f); })
-      .catch((e) => alive && setLocateError(String(e)));
-    return () => { alive = false; };
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const look = () => core.locate(target.address, pid)
+      .then((f) => {
+        if (!alive) return;
+        setLocateError(null);
+        if (f) { setFile(f); onLog(target.address, f); }
+        else { setFile(null); setWaitingForLog(true); timer = setTimeout(look, 2000); }
+      })
+      .catch((e) => { if (alive) { setLocateError(String(e)); timer = setTimeout(look, 5000); } });
+    setWaitingForLog(false);
+    look();
+    return () => { alive = false; clearTimeout(timer); };
   }, [target.address, pid, isSub]);
 
   const followId = isSub ? `sub:${target.address}:${target.id}` : `session:${target.address}`;
@@ -228,6 +239,16 @@ export function Chat({ target, terminal, onLog, onOpenSubagent, view, setView }:
         {!isSub && <QuoteLayer root={conv} onAdd={notes.add} />}
         {(locateError || error || renameError) && <div className="banner">{error ?? locateError ?? renameError}</div>}
         {loading && file && <div className="hint center">Loading…</div>}
+        {!file && !isSub && (
+          <div className="new-chat">
+            {waitingForLog || !pid ? (
+              <>
+                <div className="new-chat-title">New conversation</div>
+                <div className="hint center">Send a message to start. It shows here as soon as Claude Code writes it.</div>
+              </>
+            ) : <div className="hint center">Finding this session…</div>}
+          </div>
+        )}
         {!loading && <Virtuoso
           key={file ?? "none"}
           ref={list}
