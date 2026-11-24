@@ -138,8 +138,9 @@ function NewSession({ hosts, initial, folders, groups, onDone, onStarted }: {
 
 interface Host { id: string; name: string; machine: string | null; status: string; groups: Win[] }
 
-export function Sidebar({ hosts, target, logs, onSelect, onClosed, error, machines }: {
+export function Sidebar({ hosts, target, logs, onSelect, onRegroup, onClosed, error, machines }: {
   hosts: Host[]; target: Target | null; logs: Record<string, string>; onSelect: (t: Target) => void;
+  onRegroup: (addresses: string[], group: string) => Promise<void>;
   onClosed: (addresses: string[]) => void; error: string | null; machines: { name: string; state: string }[];
 }) {
   const [folded, toggle] = useFolded();
@@ -206,15 +207,13 @@ export function Sidebar({ hosts, target, logs, onSelect, onClosed, error, machin
     window.addEventListener("sheepy:close-group", all);
     return () => { window.removeEventListener("sheepy:close-session", one); window.removeEventListener("sheepy:close-group", all); };
   });
-  const move = (address: string, group: string) => core.setGroup(address, group).then(() => setMoveError(null)).catch((e) => setMoveError(String(e)));
+  const move = (address: string, group: string) => { setMoveError(null); onRegroup([address], group).catch((e) => setMoveError(String(e))); };
   const renameGroup = async (g: Win, name: string) => {
     setRenaming(null);
     const clean = name.replace(/\s+/g, " ").trim();
     if (!clean || clean === g.name) return;
-    try {
-      await Promise.all(g.sessions.map((s) => core.setGroup(s.address, clean)));
-      setMoveError(null);
-    } catch (e) { setMoveError(String(e)); }
+    setMoveError(null);
+    try { await onRegroup(g.sessions.map((s) => s.address), clean); } catch (e) { setMoveError(String(e)); }
   };
 
   // The person's order of a host's groups (drag a group's header onto another).

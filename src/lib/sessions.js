@@ -173,3 +173,21 @@ export function moveGroup(ids, id, before) {
   rest.splice(at < 0 ? rest.length : at, 0, id);
   return rest;
 }
+
+// Moves the person just made (address → group), shown at once, before
+// herdr-core's next picture has them: the terminals with those groups.
+export function withMoves(terminals, moves) {
+  const list = terminals ?? [];
+  if (!moves || !Object.keys(moves).length) return list;
+  return list.map((t) => (t.address in moves ? { ...t, labels: { ...t.labels, [GROUP_LABEL]: moves[t.address] } } : t));
+}
+
+// The moves herdr-core's picture doesn't show yet (the rest are done).
+export function pendingMoves(terminals, moves) {
+  const out = {};
+  for (const [address, group] of Object.entries(moves ?? {})) {
+    const t = (terminals ?? []).find((x) => x.address === address);
+    if (t && cleanGroup(t.labels?.[GROUP_LABEL]) !== cleanGroup(group)) out[address] = group;
+  }
+  return out;
+}

@@ -145,3 +145,16 @@ test("moving a group before another, or to the end", () => {
   assert.deepEqual(moveGroup(["a", "b", "c"], "a", null), ["b", "c", "a"]);
   assert.deepEqual(moveGroup(["a", "b", "c"], "b", "b"), ["a", "c", "b"], "onto itself: to the end of the rest");
 });
+
+import { withMoves, pendingMoves } from "../src/lib/sessions.js";
+test("a move shows at once and is dropped once herdr-core has it", () => {
+  const ts = [{ address: "t1", labels: { "sheepy.group": "A" } }, { address: "h/t2", labels: {} }];
+  const moves = { "h/t2": "B" };
+  const shown = withMoves(ts, moves);
+  assert.equal(shown[1].labels["sheepy.group"], "B");
+  assert.equal(shown[0], ts[0], "the others untouched");
+  assert.equal(withMoves(ts, {}), ts);
+  assert.deepEqual(pendingMoves(ts, moves), { "h/t2": "B" });
+  assert.deepEqual(pendingMoves(shown, moves), {}, "done once the picture shows it");
+  assert.deepEqual(pendingMoves([], moves), {}, "a session that's gone");
+});
