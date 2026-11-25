@@ -252,7 +252,14 @@ export function Chat({ target, terminal, onLog, onOpenSubagent, view, setView }:
   // Messages sent while Claude works: queued (its own queue, as its log
   // says, and what was sent from here) until they're in the conversation.
   const [pending, setPending] = useState<{ id: string; text: string; at: number; working: boolean }[]>([]);
-  useEffect(() => { setPending((p) => { const keep = stillPending(p, transcript?.entries ?? []); return keep.length === p.length ? p : keep; }); }, [version]);
+  const busy = status === "working" || status === "blocked";
+  useEffect(() => { setPending((p) => { const keep = stillPending(p, transcript?.entries ?? [], Date.now(), busy); return keep.length === p.length ? p : keep; }); }, [version, busy]);
+  // Idle again: what's still shown goes once it's 15 s old.
+  useEffect(() => {
+    if (busy || !pending.length) return;
+    const t = setTimeout(() => setPending((p) => stillPending(p, transcript?.entries ?? [], Date.now(), false)), 16000);
+    return () => clearTimeout(t);
+  }, [busy, pending, transcript]);
   // Restarting the session: Claude Code again on this conversation.
   const [confirmRestart, setConfirmRestart] = useState<ConfirmRequest | null>(null);
   const [restarting, setRestarting] = useState(false);
@@ -374,7 +381,7 @@ export function Chat({ target, terminal, onLog, onOpenSubagent, view, setView }:
             ) : <div style={{ height: 12 }} />),
             Footer: () => (
               <div className="queued-list">
-                {queuedView(pending, entries, transcript?.queue ?? []).map((m: any) => (
+                {queuedView(pending, entries, transcript?.queue ?? [], busy).map((m: any) => (
                   <div key={m.id} className="entry">
                     <div className="msg-row mine">
                       <div className={`bubble queued ${m.state}`}>
