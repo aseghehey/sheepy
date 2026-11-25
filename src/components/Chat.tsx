@@ -46,7 +46,7 @@ function useTranscript(id: string, machine: string | null, file: string | null, 
     return () => { alive = false; off.then((u) => u()); core.unfollow(id); };
   }, [id, machine, file, sidechain]);
 
-  // Earlier history, page by page (each within herdr-search's output budget),
+  // Earlier history, page by page (each within encontra's output budget),
   // back to `target` (a log offset) or about 2 MB further. At most 40 pages.
   const loadEarlier = async (target?: number) => {
     if (!file || sidechain || fromRef.current <= 0) return;

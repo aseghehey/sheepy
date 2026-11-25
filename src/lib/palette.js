@@ -2,9 +2,9 @@
 // Plain functions, tested in test/palette.test.js.
 
 /**
- * One list from each machine's herdr-search answer: [{ machine, session,
+ * One list from each machine's encontra answer: [{ machine, session,
  * project, file, best, last_ts, matches, hits }], best match first or newest
- * first. A machine that failed or has no herdr-search adds nothing.
+ * first. A machine that failed or has no encontra adds nothing.
  */
 export function mergeResults(answers, sort = "best") {
   const all = [];

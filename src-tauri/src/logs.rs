@@ -1,5 +1,5 @@
 //! Claude Code's session logs: finding the one an agent terminal is writing,
-//! reading it from its end and following it as it grows (through herdr-search
+//! reading it from its end and following it as it grows (through encontra
 //! on the agent's machine, with a plain `tail` when that isn't installed), its
 //! sub-agents' logs, and searching every session.
 
@@ -11,8 +11,12 @@ use std::sync::Mutex;
 use tauri::{AppHandle, Emitter};
 use tauri::async_runtime::JoinHandle;
 
-/// herdr-search, where its installer puts it on each machine.
-const SEARCH: &str = r#"s="$HOME/.local/share/herdr-search/bin/herdr-search"; [ -x "$s" ] || exit 127; exec "$s" "$@""#;
+/// encontra (https://github.com/aseghehey/encontra) on the agent's machine;
+/// herdr-search, its earlier name, where it isn't installed yet.
+const SEARCH: &str = r#"for s in "$HOME/.local/bin/encontra" "$(command -v encontra 2>/dev/null)" "$HOME/.local/share/herdr-search/bin/herdr-search"; do
+  [ -n "$s" ] && [ -x "$s" ] && exec "$s" "$@"
+done
+exit 127"#;
 
 /// How much of a log's end to read first.
 const TAIL_BYTES: u64 = 24 * 1024 * 1024;
@@ -57,7 +61,7 @@ async fn search(on: Option<&str>, args: &[&str], timeout: u64) -> Result<Option<
     }
     serde_json::from_str(out.stdout.trim())
         .map(Some)
-        .map_err(|_| out.stderr.trim().lines().last().unwrap_or("herdr-search failed").to_string())
+        .map_err(|_| out.stderr.trim().lines().last().unwrap_or("encontra failed").to_string())
 }
 
 /// The log an agent terminal's Claude Code is writing, from its foreground pid.
@@ -159,13 +163,13 @@ pub async fn page(on: Option<&str>, file: &str, from: u64, to: u64) -> Result<Va
     let (f, t) = (from.to_string(), to.to_string());
     search(on, &["page", "--file", file, "--from", &f, "--to", &t], 120)
         .await?
-        .ok_or_else(|| "Reading earlier history needs herdr-search on that machine".into())
+        .ok_or_else(|| "Reading earlier history needs encontra on that machine (github.com/aseghehey/encontra)".into())
 }
 
-/// herdr-search with `args` on `on` (query, sessions, rename, …).
+/// encontra with `args` on `on` (query, sessions, rename, …).
 pub async fn search_json(on: Option<&str>, args: Vec<String>) -> Result<Value, String> {
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
-    search(on, &args, 60).await?.ok_or_else(|| "herdr-search isn't installed on that machine".into())
+    search(on, &args, 60).await?.ok_or_else(|| "encontra isn't installed on that machine (github.com/aseghehey/encontra)".into())
 }
 
 /// The logs being followed, by the id the window gave each.
@@ -174,7 +178,7 @@ pub struct Follows(pub Mutex<HashMap<String, JoinHandle<()>>>);
 
 /// Reads `file` from its end, then follows it: "log" events carry
 /// { id, lines: [{ at, line }], from, to, first, reset, truncated, error }.
-/// `plain`: read the file itself, not through herdr-search, whose pages leave
+/// `plain`: read the file itself, not through encontra, whose pages leave
 /// out side-chain lines — every line of a sub-agent's own log is one.
 pub fn follow(app: AppHandle, follows: &Follows, id: String, on: Option<String>, file: String, plain: bool) {
     let task_id = id.clone();
@@ -250,7 +254,7 @@ pub fn unfollow(follows: &Follows, id: &str) {
     }
 }
 
-/// Without herdr-search: the last few megabytes, then new bytes every two seconds.
+/// Without encontra: the last few megabytes, then new bytes every two seconds.
 async fn plain_tail(emit: &impl Fn(Value), id: &str, on: Option<&str>, file: &str) {
     const START: u64 = 4 * 1024 * 1024;
     let size = |out: &hc::Out| out.stdout.trim().parse::<u64>().unwrap_or(0);
