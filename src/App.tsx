@@ -7,6 +7,8 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Palette } from "./components/Palette";
 import { CommandPalette } from "./components/CommandPalette";
 import { useView } from "./components/ViewMenu";
+import { useModels } from "./components/ModelMenu";
+import { modelLabel } from "./lib/models.js";
 import type { Machine } from "./lib/core";
 
 export default function App() {
@@ -84,6 +86,8 @@ export default function App() {
     }
   };
   const list = useMemo(() => hosts(withMoves(facts?.terminals ?? [], moves), machines), [facts, moves, machines]);
+  // Each session's model and effort, from its log (and changes made here).
+  const models = useModels(facts?.terminals ?? []);
   const terminal = target ? (facts?.terminals ?? []).find((t) => t.address === target.address) ?? null : null;
 
   return (
@@ -105,6 +109,7 @@ export default function App() {
         logs={logs}
         onSelect={setTarget}
         onRegroup={regroup}
+        modelOf={(address) => modelLabel(models.shown(address))}
         onClosed={(addresses) => setTarget((t) => (t && addresses.includes(t.address) ? null : t))}
         error={coreError}
         machines={machines}
@@ -121,6 +126,8 @@ export default function App() {
             onOpenSubagent={(t) => setTarget(t)}
             view={view}
             setView={setView}
+            model={models.shown(target.address)}
+            onModelChanged={(c) => { models.changed(target.address, c); setTimeout(models.read, 1500); }}
           />
           </ErrorBoundary>
         ) : (

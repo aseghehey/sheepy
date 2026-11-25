@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { EFFORTS, MODEL_CHOICES } from "../lib/models.js";
 import { core, machineOf } from "../lib/core";
 import { subagentRow, orderGroups, moveGroup } from "../lib/sessions.js";
 import { Machines, useHealth, Health } from "./Machines";
@@ -85,14 +86,19 @@ function NewSession({ hosts, initial, folders, groups, onDone, onStarted }: {
   // A group of the host's, or a new one typed in.
   const [newGroup, setNewGroup] = useState(false);
   const existing = groups(machine || null);
+  // Claude Code's defaults unless chosen; the last choice is kept.
+  const [model, setModel] = useState(() => localStorage.getItem("new.model") ?? "");
+  const [effort, setEffort] = useState(() => localStorage.getItem("new.effort") ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const start = async () => {
     setBusy(true);
     setError(null);
     try {
-      const address = await core.newSession(machine || null, folder || null, group || null);
+      const address = await core.newSession(machine || null, folder || null, group || null, model || null, effort || null);
       localStorage.setItem(folderKey(machine), folder);
+      localStorage.setItem("new.model", model);
+      localStorage.setItem("new.effort", effort);
       onStarted(address, folder.split("/").filter(Boolean).pop() ?? "New session");
       onDone();
     } catch (e) { setError(String(e)); } finally { setBusy(false); }
@@ -127,6 +133,20 @@ function NewSession({ hosts, initial, folders, groups, onDone, onStarted }: {
           </select>
         )}
       </label>
+      <div className="form-row">
+        <label>Model
+          <select value={model} onChange={(e) => setModel(e.target.value)}>
+            <option value="">Claude's default</option>
+            {MODEL_CHOICES.filter((m) => m.id !== "default").map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+          </select>
+        </label>
+        <label>Effort
+          <select value={effort} onChange={(e) => setEffort(e.target.value)}>
+            <option value="">Claude's default</option>
+            {EFFORTS.map((x) => <option key={x} value={x}>{x}</option>)}
+          </select>
+        </label>
+      </div>
       {error && <div className="banner">{error}</div>}
       <div className="form-actions">
         <button type="button" onClick={onDone}>Cancel</button>
@@ -138,9 +158,10 @@ function NewSession({ hosts, initial, folders, groups, onDone, onStarted }: {
 
 interface Host { id: string; name: string; machine: string | null; status: string; groups: Win[] }
 
-export function Sidebar({ hosts, target, logs, onSelect, onRegroup, onClosed, error, machines }: {
+export function Sidebar({ hosts, target, logs, onSelect, onRegroup, modelOf, onClosed, error, machines }: {
   hosts: Host[]; target: Target | null; logs: Record<string, string>; onSelect: (t: Target) => void;
   onRegroup: (addresses: string[], group: string) => Promise<void>;
+  modelOf: (address: string) => string | null;
   onClosed: (addresses: string[]) => void; error: string | null; machines: { name: string; state: string }[];
 }) {
   const [folded, toggle] = useFolded();
@@ -278,6 +299,7 @@ export function Sidebar({ hosts, target, logs, onSelect, onRegroup, onClosed, er
                 onClick={() => onSelect({ kind: "session", address: s.address, title: s.title })}>
                 <StatusDot status={s.status} />
                 <span className="label">{isClosing ? `Closing ${s.title}…` : s.title}</span>
+                {!isClosing && modelOf(s.address) && <span className="row-model" title="Model · effort">{modelOf(s.address)}</span>}
                 <span className="row-x" role="button" title="Close this session…"
                   onClick={(e) => { e.stopPropagation(); closeSessions([s], `“${s.title}”`); }}>×</span>
               </button>

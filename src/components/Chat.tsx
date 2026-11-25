@@ -6,6 +6,7 @@ import { statusOf, activityOf, subagentRow } from "../lib/sessions.js";
 import { Markdown, copyToClipboard } from "./Markdown";
 import { Composer } from "./Composer";
 import { QuestionCard } from "./QuestionCard";
+import { ModelMenu, type Shown } from "./ModelMenu";
 import { StatusDot, type Target } from "./Sidebar";
 import { ViewMenu, type View } from "./ViewMenu";
 import { Confirm, type ConfirmRequest } from "./Confirm";
@@ -142,8 +143,9 @@ function EntryView({ e, subagents, onOpenSubagent, words }: { e: Entry; subagent
   }
 }
 
-export function Chat({ target, terminal, onLog, onOpenSubagent, view, setView }: {
+export function Chat({ target, terminal, onLog, onOpenSubagent, view, setView, model, onModelChanged }: {
   target: Target; terminal: Terminal | null;
+  model: Shown; onModelChanged: (c: { model?: string; effort?: string }) => void;
   onLog: (address: string, file: string) => void; onOpenSubagent: (t: Target) => void;
   view: View; setView: (c: Partial<View>) => void;
 }) {
@@ -322,6 +324,7 @@ export function Chat({ target, terminal, onLog, onOpenSubagent, view, setView }:
             onDoubleClick={() => { if (!isSub) { setNewName(title); setRenaming(true); } }}>{title}</div>
         )}
         <div className="chat-sub" style={{ flex: 1 }}>{isSub ? "sub-agent" : [machine ?? "this computer", terminal?.foreground?.cwd?.replace(/^\/(local\/)?home\/[^/]+/, "~")].filter(Boolean).join(" · ")}</div>
+        {!isSub && <ModelMenu address={target.address} status={status} shown={model} onChanged={onModelChanged} />}
         <button className={`head-btn ${finding ? "on" : ""}`} title="Find in this conversation (⌘F)" onClick={() => { setFinding(!finding); setTimeout(() => findBox.current?.focus(), 0); }}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
         </button>

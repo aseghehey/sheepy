@@ -376,3 +376,18 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 .entry:hover .msg-actions button, .msg-actions button.done { opacity: 1; }
 .msg-actions button:hover { background: var(--hover); color: var(--fg); }
 .msg-actions button.done { color: var(--done); }
+
+/* Model and effort: in each sidebar row, and the chat header's chip. */
+.row-model { flex: none; max-width: 46%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--dim); font-variant-numeric: tabular-nums; }
+.row.on .row-model { color: var(--muted); }
+.row:hover .row-model { display: none; }
+.model-chip { height: 24px; padding: 0 10px; border-radius: 12px; border: 1px solid var(--border); font-size: 12px; color: var(--muted); white-space: nowrap; }
+.model-chip:hover, .model-chip.on { color: inherit; border-color: var(--dim); }
+.model-chip.pending { border-style: dashed; }
+.model-pop { width: 260px; right: 0; max-height: 70vh; overflow-y: auto; }
+.model-pop .seg button { text-transform: none; }
+.pop-note { font-size: 11.5px; color: var(--dim); padding: 6px 10px; line-height: 1.4; }
+.pop-other { padding: 2px 8px 4px; }
+.pop-other input { width: 100%; font-size: 12px; padding: 4px 8px; border-radius: 6px; border: 1px solid var(--border); background: transparent; color: inherit; }
+.new-session .form-row { display: flex; gap: 10px; }
+.new-session .form-row label { flex: 1; min-width: 0; }

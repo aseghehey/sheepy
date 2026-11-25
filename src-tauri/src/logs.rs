@@ -67,6 +67,62 @@ pub async fn locate(address: &str, pid: u64) -> Result<Option<String>, String> {
     Ok(out.stdout.lines().next().map(str::trim).filter(|s| !s.is_empty()).map(String::from))
 }
 
+/// For each Claude Code process under the pids given (as LOCATE finds them):
+/// the model and effort of its session's latest reply, and when it was.
+/// Claude Code logs both on every reply (`requestedModel`, `effort`); before
+/// the first one there's nothing to show.
+const MODELS: &str = r#"
+tree=$(ps -e -o pid= -o ppid=)
+for root in "$@"; do
+  desc=$(printf '%s\n' "$tree" | awk -v root="$root" '
+    { kids[$2] = kids[$2] " " $1 }
+    END { q = root; for (d = 0; d < 4 && q != ""; d++) { n = split(q, a, " "); q = "";
+          for (i = 1; i <= n; i++) { print a[i]; q = q " " kids[a[i]] } } }' | tr '\n' ' ')
+  for p in $desc; do
+    f="$HOME/.claude/sessions/$p.json"
+    [ -f "$f" ] || continue
+    id=$(sed -n 's/.*"sessionId":"\([^"]*\)".*/\1/p' "$f")
+    [ -n "$id" ] || continue
+    log=$(ls -t "$HOME"/.claude/projects/*/"$id".jsonl 2>/dev/null | head -1)
+    line=""
+    [ -n "$log" ] && line=$(tail -c 3000000 "$log" | grep '"requestedModel"' | tail -1)
+    m=$(printf '%s' "$line" | grep -o '"requestedModel":"[^"]*"' | tail -1 | cut -d'"' -f4)
+    e=$(printf '%s' "$line" | grep -o '"effort":"[^"]*"' | tail -1 | cut -d'"' -f4)
+    t=$(printf '%s' "$line" | grep -o '"timestamp":"[^"]*"' | tail -1 | cut -d'"' -f4)
+    printf '%s\t%s\t%s\t%s\n' "$root" "$m" "$e" "$t"
+    break
+  done
+done"#;
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ModelOf {
+    pub pid: u64,
+    pub model: Option<String>,
+    pub effort: Option<String>,
+    pub at: Option<String>,
+}
+
+pub async fn models(on: Option<&str>, pids: &[u64]) -> Result<Vec<ModelOf>, String> {
+    if pids.is_empty() {
+        return Ok(vec![]);
+    }
+    let args: Vec<String> = pids.iter().map(u64::to_string).collect();
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let out = hc::sh(on, MODELS, &refs, 30).await?;
+    Ok(parse_models(&out.stdout))
+}
+
+pub fn parse_models(text: &str) -> Vec<ModelOf> {
+    let some = |s: Option<&str>| s.map(str::trim).filter(|s| !s.is_empty()).map(String::from);
+    text.lines()
+        .filter_map(|l| {
+            let mut p = l.split('\t');
+            let pid = p.next()?.trim().parse().ok()?;
+            Some(ModelOf { pid, model: some(p.next()), effort: some(p.next()), at: some(p.next()) })
+        })
+        .collect()
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct SubAgent {
     pub id: String,
@@ -242,6 +298,14 @@ pub fn split_lines(text: &str, offset: u64, skip_first: bool) -> (Vec<Value>, u6
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn models_read_from_the_script() {
+        let got = parse_models("101\tglobal.anthropic.claude-opus-5-5\thigh\t2026-11-25T14:19:49.117Z\n202\t\t\t\nnot a pid\tx\n");
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0], ModelOf { pid: 101, model: Some("global.anthropic.claude-opus-5-5".into()), effort: Some("high".into()), at: Some("2026-11-25T14:19:49.117Z".into()) });
+        assert_eq!(got[1], ModelOf { pid: 202, model: None, effort: None, at: None });
+    }
 
     #[test]
     fn complete_lines_with_their_offsets() {

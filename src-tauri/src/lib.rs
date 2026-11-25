@@ -202,6 +202,13 @@ async fn locate(address: String, pid: u64) -> Result<Option<String>, String> {
     logs::locate(&address, pid).await
 }
 
+/// The model and effort of each Claude Code session under these pids on
+/// `machine` (one call per machine).
+#[tauri::command]
+async fn models(machine: Option<String>, pids: Vec<u64>) -> Result<Vec<logs::ModelOf>, String> {
+    logs::models(machine.as_deref(), &pids).await
+}
+
 #[tauri::command]
 async fn subagents(machine: Option<String>, file: String) -> Result<Vec<logs::SubAgent>, String> {
     logs::subagents(machine.as_deref(), &file).await
@@ -473,7 +480,8 @@ async fn set_group(address: String, group: String) -> Result<(), String> {
 /// ~/.ssh/config herdr-core doesn't reach yet is added first (with herdr-core
 /// installed there if it has none). Its address.
 #[tauri::command]
-async fn new_session(machine: Option<String>, folder: Option<String>, group: Option<String>) -> Result<String, String> {
+async fn new_session(machine: Option<String>, folder: Option<String>, group: Option<String>, model: Option<String>, effort: Option<String>) -> Result<String, String> {
+    let flags = launch_flags(model.as_deref(), effort.as_deref())?;
     if let Some(m) = &machine {
         let known = hc::run(&["machine", "ls", "--json"]).await?;
         let listed = serde_json::from_str::<Value>(known.stdout.trim()).ok()
@@ -511,12 +519,33 @@ async fn new_session(machine: Option<String>, folder: Option<String>, group: Opt
     }
     args.push("--".into());
     args.extend(claude_argv(machine.as_deref()).await);
+    args.extend(flags);
     let refs: Vec<&str> = args.iter().map(String::as_str).collect();
     let out = hc::run(&refs).await?;
     let address = started(&out, machine.as_deref(), folder.as_deref())?;
     log::info!("started {address} on {} in {}", machine.as_deref().unwrap_or("this computer"), folder.as_deref().unwrap_or("~"));
     tauri::async_runtime::spawn(trust_folder(address.clone()));
     Ok(address)
+}
+
+/// Claude Code's own flags for a new session's model and effort, when chosen
+/// (else its defaults). Only names Claude Code could take.
+fn launch_flags(model: Option<&str>, effort: Option<&str>) -> Result<Vec<String>, String> {
+    let mut out = vec![];
+    if let Some(m) = model.map(str::trim).filter(|m| !m.is_empty() && *m != "default") {
+        let ok = m.len() <= 80 && !m.starts_with('-') && m.chars().all(|c| c.is_ascii_alphanumeric() || "._:/[]-".contains(c));
+        if !ok {
+            return Err(format!("not a model name: {m}"));
+        }
+        out.extend(["--model".to_string(), m.to_string()]);
+    }
+    if let Some(e) = effort.map(str::trim).filter(|e| !e.is_empty() && *e != "default") {
+        if !["low", "medium", "high", "xhigh", "max"].contains(&e) {
+            return Err(format!("not an effort level: {e}"));
+        }
+        out.extend(["--effort".to_string(), e.to_string()]);
+    }
+    Ok(out)
 }
 
 /// Claude Code asks whether to trust a folder the first time it starts in
@@ -632,7 +661,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             terminals, terminal, send, keys, interrupt, screen, locate, subagents, page, search, follow, unfollow,
-            machines, machine_add, save_snapshot, resume, machine_stats, set_group, new_session, ssh_hosts,
+            machines, machine_add, models, save_snapshot, resume, machine_stats, set_group, new_session, ssh_hosts,
             close_session, log_dir, restart, newer_installed, refresh_now, restart_session
         ])
         .run(tauri::generate_context!())
@@ -642,6 +671,16 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn launch_flags_for_model_and_effort() {
+        assert_eq!(launch_flags(None, None).unwrap(), Vec::<String>::new());
+        assert_eq!(launch_flags(Some("default"), Some("")).unwrap(), Vec::<String>::new());
+        assert_eq!(launch_flags(Some("opus[1m]"), Some("xhigh")).unwrap(), vec!["--model", "opus[1m]", "--effort", "xhigh"]);
+        assert!(launch_flags(Some("--dangerous"), None).is_err());
+        assert!(launch_flags(Some("opus; rm"), None).is_err());
+        assert!(launch_flags(None, Some("extreme")).is_err());
+    }
 
     #[test]
     fn core_errors_in_plain_words() {
