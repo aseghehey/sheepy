@@ -480,7 +480,7 @@ async fn set_group(address: String, group: String) -> Result<(), String> {
 /// ~/.ssh/config herdr-core doesn't reach yet is added first (with herdr-core
 /// installed there if it has none). Its address.
 #[tauri::command]
-async fn new_session(machine: Option<String>, folder: Option<String>, group: Option<String>, model: Option<String>, effort: Option<String>) -> Result<String, String> {
+async fn new_session(machine: Option<String>, folder: Option<String>, group: Option<String>, model: Option<String>, effort: Option<String>, create: Option<bool>) -> Result<String, String> {
     let flags = launch_flags(model.as_deref(), effort.as_deref())?;
     if let Some(m) = &machine {
         let known = hc::run(&["machine", "ls", "--json"]).await?;
@@ -509,7 +509,23 @@ async fn new_session(machine: Option<String>, folder: Option<String>, group: Opt
         if f.starts_with('-') {
             return Err("not a folder".into());
         }
-        args.extend(["--cwd".into(), f.clone()]);
+        // The folder as it is on that machine: there, a file, or not yet.
+        let place = machine.as_deref().unwrap_or("this computer");
+        let (state, path) = folder_state_on(machine.as_deref(), f).await
+            .map_err(|e| format!("couldn't check {f} on {place}: {e}"))?;
+        match state.as_str() {
+            "dir" => {}
+            "file" => return Err(format!("{path} on {place} is a file, not a folder")),
+            _ if create.unwrap_or(false) => {
+                let out = hc::sh(machine.as_deref(), r#"mkdir -p -- "$1""#, &[&path], 20).await?;
+                if out.code != 0 {
+                    return Err(format!("couldn't create {path} on {place}: {}", out.stderr.trim()));
+                }
+                log::info!("created {path} on {place}");
+            }
+            _ => return Err(format!("{MISSING_FOLDER}{path}")),
+        }
+        args.extend(["--cwd".into(), path]);
     }
     if let Some(m) = &machine {
         args.extend(["--on".into(), m.clone()]);
@@ -526,6 +542,41 @@ async fn new_session(machine: Option<String>, folder: Option<String>, group: Opt
     log::info!("started {address} on {} in {}", machine.as_deref().unwrap_or("this computer"), folder.as_deref().unwrap_or("~"));
     tauri::async_runtime::spawn(trust_folder(address.clone()));
     Ok(address)
+}
+
+/// What new_session answers when the folder isn't there yet (then the path):
+/// the window offers to create it.
+const MISSING_FOLDER: &str = "missing-folder:";
+
+/// A folder on `machine` ("~" and "~/…" meaning that machine's home): "dir",
+/// "file" or "missing", and its full path.
+async fn folder_state_on(machine: Option<&str>, folder: &str) -> Result<(String, String), String> {
+    let script = r#"d=$1
+case "$d" in "~") d=$HOME ;; "~/"*) d="$HOME/${d#??}" ;; esac
+if [ -d "$d" ]; then s=dir; elif [ -e "$d" ]; then s=file; else s=missing; fi
+printf '%s\t%s\n' "$s" "$d""#;
+    let out = hc::sh(machine, script, &[folder], 20).await?;
+    parse_folder_state(&out.stdout).ok_or_else(|| {
+        let e = out.stderr.trim();
+        if e.is_empty() { "no answer".to_string() } else { e.lines().last().unwrap_or(e).to_string() }
+    })
+}
+
+fn parse_folder_state(text: &str) -> Option<(String, String)> {
+    let line = text.lines().rev().find(|l| l.contains('\t'))?;
+    let (s, p) = line.split_once('\t')?;
+    matches!(s, "dir" | "file" | "missing").then(|| (s.to_string(), p.to_string()))
+}
+
+/// Whether a folder is there on a machine, for the New session form.
+#[tauri::command]
+async fn folder_state(machine: Option<String>, folder: String) -> Result<Value, String> {
+    let folder = folder.trim();
+    if folder.is_empty() || folder.starts_with('-') {
+        return Ok(serde_json::json!({ "state": "none" }));
+    }
+    let (state, path) = folder_state_on(machine.as_deref(), folder).await?;
+    Ok(serde_json::json!({ "state": state, "path": path }))
 }
 
 /// Claude Code's own flags for a new session's model and effort, when chosen
@@ -661,7 +712,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             terminals, terminal, send, keys, interrupt, screen, locate, subagents, page, search, follow, unfollow,
-            machines, machine_add, models, save_snapshot, resume, machine_stats, set_group, new_session, ssh_hosts,
+            machines, machine_add, models, folder_state, save_snapshot, resume, machine_stats, set_group, new_session, ssh_hosts,
             close_session, log_dir, restart, newer_installed, refresh_now, restart_session
         ])
         .run(tauri::generate_context!())
@@ -671,6 +722,31 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn folder_states_read_from_the_script() {
+        assert_eq!(parse_folder_state("dir\t/home/me/code\n"), Some(("dir".into(), "/home/me/code".into())));
+        assert_eq!(parse_folder_state("greeting from a login shell\nmissing\t/w/new one\n"), Some(("missing".into(), "/w/new one".into())));
+        assert_eq!(parse_folder_state("file\t/etc/hosts"), Some(("file".into(), "/etc/hosts".into())));
+        assert_eq!(parse_folder_state(""), None);
+        assert_eq!(parse_folder_state("weird\t/x"), None);
+    }
+
+    #[tokio::test]
+    async fn folder_state_on_this_computer() {
+        let home = std::env::var("HOME").unwrap();
+        assert_eq!(folder_state_on(None, "~").await.unwrap(), ("dir".into(), home.clone()));
+        let missing = format!("/tmp/sheepy-no-such-folder-{}", std::process::id());
+        assert_eq!(folder_state_on(None, &missing).await.unwrap().0, "missing");
+        let file = format!("/tmp/sheepy-a-file-{}", std::process::id());
+        std::fs::write(&file, "x").unwrap();
+        assert_eq!(folder_state_on(None, &file).await.unwrap().0, "file");
+        let _ = std::fs::remove_file(&file);
+        let spaced = format!("~/sheepy no such folder {}", std::process::id());
+        let (state, path) = folder_state_on(None, &spaced).await.unwrap();
+        assert_eq!(state, "missing");
+        assert_eq!(path, format!("{home}/sheepy no such folder {}", std::process::id()));
+    }
 
     #[test]
     fn launch_flags_for_model_and_effort() {

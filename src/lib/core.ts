@@ -57,8 +57,10 @@ export const core = {
     invoke<{ pid: number; model: string | null; effort: string | null; at: string | null }[]>("models", { machine, pids }),
   machineStats: (machine: string | null) => invoke<string>("machine_stats", { machine }),
   setGroup: (address: string, group: string) => invoke<void>("set_group", { address, group }),
-  newSession: (machine: string | null, folder: string | null, group: string | null, model: string | null = null, effort: string | null = null) =>
-    invoke<string>("new_session", { machine, folder, group, model, effort }),
+  newSession: (machine: string | null, folder: string | null, group: string | null, model: string | null = null, effort: string | null = null, create = false) =>
+    invoke<string>("new_session", { machine, folder, group, model, effort, create }),
+  folderState: (machine: string | null, folder: string) =>
+    invoke<{ state: "dir" | "file" | "missing" | "none"; path?: string }>("folder_state", { machine, folder }),
   sshHosts: () => invoke<string[]>("ssh_hosts"),
   closeSession: (address: string) => invoke<void>("close_session", { address }),
   restartSession: (address: string, log: string) => invoke<string>("restart_session", { address, log }),

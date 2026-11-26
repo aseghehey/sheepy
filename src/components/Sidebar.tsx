@@ -91,17 +91,37 @@ function NewSession({ hosts, initial, folders, groups, onDone, onStarted }: {
   const [effort, setEffort] = useState(() => localStorage.getItem("new.effort") ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const start = async () => {
+  // The folder as it is on the chosen host, checked as it's typed: there,
+  // not yet (Start then offers to create it), a file, or unknown.
+  const [where, setWhere] = useState<{ state: string; path?: string; error?: string } | null>(null);
+  const [missing, setMissing] = useState<string | null>(null);
+  useEffect(() => {
+    setMissing(null);
+    const f = folder.trim();
+    if (!f) { setWhere(null); return; }
+    let alive = true;
+    const t = setTimeout(() => {
+      core.folderState(machine || null, f)
+        .then((w) => alive && setWhere(w))
+        .catch((e) => alive && setWhere({ state: "unknown", error: String(e) }));
+    }, 400);
+    return () => { alive = false; clearTimeout(t); };
+  }, [machine, folder]);
+  const start = async (create = false) => {
     setBusy(true);
     setError(null);
     try {
-      const address = await core.newSession(machine || null, folder || null, group || null, model || null, effort || null);
+      const address = await core.newSession(machine || null, folder || null, group || null, model || null, effort || null, create);
       localStorage.setItem(folderKey(machine), folder);
       localStorage.setItem("new.model", model);
       localStorage.setItem("new.effort", effort);
       onStarted(address, folder.split("/").filter(Boolean).pop() ?? "New session");
       onDone();
-    } catch (e) { setError(String(e)); } finally { setBusy(false); }
+    } catch (e) {
+      const text = String(e);
+      if (text.startsWith("missing-folder:")) setMissing(text.slice("missing-folder:".length));
+      else setError(text);
+    } finally { setBusy(false); }
   };
   return (
     <form className="new-session" onSubmit={(e) => { e.preventDefault(); start(); }}
@@ -116,6 +136,14 @@ function NewSession({ hosts, initial, folders, groups, onDone, onStarted }: {
       <label>Folder on {machine || "this computer"}
         <input autoFocus value={folder} placeholder="~ (home)" spellCheck={false} list="folders" onChange={(e) => setFolder(e.target.value)} />
         <datalist id="folders">{folders(machine || null).map((f) => <option key={f} value={f} />)}</datalist>
+        {where && where.state !== "none" && (
+          <span className={`field-hint ${where.state}`}>
+            {where.state === "dir" ? "✓ Folder found"
+              : where.state === "missing" ? "Not there yet: Start offers to create it"
+              : where.state === "file" ? "That's a file, not a folder"
+              : `Couldn't check the folder: ${where.error ?? "no answer"}`}
+          </span>
+        )}
       </label>
       <label>Group
         {newGroup ? (
@@ -148,9 +176,18 @@ function NewSession({ hosts, initial, folders, groups, onDone, onStarted }: {
         </label>
       </div>
       {error && <div className="banner">{error}</div>}
+      {missing && (
+        <div className="banner ask">
+          <div><b>{missing}</b> doesn't exist on {machine || "this computer"}.</div>
+          <div className="form-actions">
+            <button type="button" onClick={() => setMissing(null)}>Change folder</button>
+            <button type="button" className="primary" disabled={busy} onClick={() => start(true)}>Create it and start</button>
+          </div>
+        </div>
+      )}
       <div className="form-actions">
         <button type="button" onClick={onDone}>Cancel</button>
-        <button type="submit" className="primary" disabled={busy}>{busy ? "Starting…" : "Start"}</button>
+        <button type="submit" className="primary" disabled={busy || where?.state === "file"}>{busy ? "Starting…" : "Start"}</button>
       </div>
     </form>
   );
