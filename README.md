@@ -18,9 +18,9 @@ dictation, accessibility.
 - **A session's log** is found from its Claude Code process
   (`~/.claude/sessions/<pid>.json` names the session; its log is
   `~/.claude/projects/*/<session>.jsonl`), on whichever machine it runs.
-- **Following a log** uses herdr-search on that machine: the end of the log
+- **Following a log** uses encontra on that machine: the end of the log
   first, then `follow --wait`, which returns as soon as new lines are written
-  (a plain `tail` every two seconds without herdr-search).
+  (a plain `tail` every two seconds without encontra).
 - **Sub-agents** are the `agent-<id>.jsonl` logs beside a session, with the
   `.meta.json` Claude Code writes for each (what it was asked, its type,
   whether it finished). Each Task call in the conversation links to its own.
@@ -42,12 +42,22 @@ commit: `npm run app:stable -- <ref>`) in a temporary clean checkout, so
 uncommitted work can't reach it. Use it day to day; update it when a change
 is committed and works in Sheepy Dev.
 
-Needs herdr-core (`~/.local/bin/herdr-core`) and, for live logs, herdr-search
-on each machine (`~/.local/share/herdr-search/bin/herdr-search`).
+Needs herdr-core (`~/.local/bin/herdr-core`) and, for live logs and search,
+encontra on each machine ([encontra](https://github.com/aseghehey/encontra), at `~/.local/bin/encontra`).
 
 ## Tests
 
 ```sh
-node --test test/*.test.js        # transcript parsing, find, questions, annotations, sessions
-cd src-tauri && cargo test        # herdr-core calls, log reading, sub-agents
+npm run check        # everything CI runs, in order
+npm run typecheck    # TypeScript, the app and its tests
+npm run test:logic   # plain logic (test/): transcripts, questions, sessions, paths, models, queue
+npm run test:ui      # the screens (ui-test/), drawn in jsdom with Tauri stood in
+cd src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
 ```
+
+The screen tests answer the app's Tauri commands from `ui-test/tauri.ts`, so
+they draw the real window (sidebar, conversation parts, palettes) without
+herdr-core or a machine to reach. Add a test with every change.
+
+CI (`.github/workflows/ci.yml`) runs all of it on every pull request and
+push to `main`; a failure blocks the merge.
