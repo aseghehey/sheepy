@@ -5,11 +5,11 @@
 
 use crate::hc;
 use serde::Serialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::Mutex;
-use tauri::{AppHandle, Emitter};
 use tauri::async_runtime::JoinHandle;
+use tauri::{AppHandle, Emitter};
 
 /// encontra (https://github.com/aseghehey/encontra) on the agent's machine;
 /// herdr-search, its earlier name, where it isn't installed yet.
@@ -61,14 +61,27 @@ async fn search(on: Option<&str>, args: &[&str], timeout: u64) -> Result<Option<
     }
     serde_json::from_str(out.stdout.trim())
         .map(Some)
-        .map_err(|_| out.stderr.trim().lines().last().unwrap_or("encontra failed").to_string())
+        .map_err(|_| {
+            out.stderr
+                .trim()
+                .lines()
+                .last()
+                .unwrap_or("encontra failed")
+                .to_string()
+        })
 }
 
 /// The log an agent terminal's Claude Code is writing, from its foreground pid.
 pub async fn locate(address: &str, pid: u64) -> Result<Option<String>, String> {
     let pid = pid.to_string();
     let out = hc::sh(hc::machine_of(address), LOCATE, &[&pid], 30).await?;
-    Ok(out.stdout.lines().next().map(str::trim).filter(|s| !s.is_empty()).map(String::from))
+    Ok(out
+        .stdout
+        .lines()
+        .next()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(String::from))
 }
 
 /// For each Claude Code process under the pids given (as LOCATE finds them):
@@ -122,7 +135,12 @@ pub fn parse_models(text: &str) -> Vec<ModelOf> {
         .filter_map(|l| {
             let mut p = l.split('\t');
             let pid = p.next()?.trim().parse().ok()?;
-            Some(ModelOf { pid, model: some(p.next()), effort: some(p.next()), at: some(p.next()) })
+            Some(ModelOf {
+                pid,
+                model: some(p.next()),
+                effort: some(p.next()),
+                at: some(p.next()),
+            })
         })
         .collect()
 }
@@ -151,7 +169,13 @@ pub fn parse_subagents(text: &str) -> Vec<SubAgent> {
             let size = p.next()?.parse().unwrap_or(0);
             let mtime = p.next()?.parse().unwrap_or(0);
             let meta = serde_json::from_str(p.next().unwrap_or("{}")).unwrap_or(json!({}));
-            Some(SubAgent { id, file, size, mtime, meta })
+            Some(SubAgent {
+                id,
+                file,
+                size,
+                mtime,
+                meta,
+            })
         })
         .collect();
     list.sort_by_key(|s| s.mtime);
@@ -163,13 +187,18 @@ pub async fn page(on: Option<&str>, file: &str, from: u64, to: u64) -> Result<Va
     let (f, t) = (from.to_string(), to.to_string());
     search(on, &["page", "--file", file, "--from", &f, "--to", &t], 120)
         .await?
-        .ok_or_else(|| "Reading earlier history needs encontra on that machine (github.com/aseghehey/encontra)".into())
+        .ok_or_else(|| {
+            "Reading earlier history needs encontra on that machine (github.com/aseghehey/encontra)"
+                .into()
+        })
 }
 
 /// encontra with `args` on `on` (query, sessions, rename, …).
 pub async fn search_json(on: Option<&str>, args: Vec<String>) -> Result<Value, String> {
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
-    search(on, &args, 60).await?.ok_or_else(|| "encontra isn't installed on that machine (github.com/aseghehey/encontra)".into())
+    search(on, &args, 60).await?.ok_or_else(|| {
+        "encontra isn't installed on that machine (github.com/aseghehey/encontra)".into()
+    })
 }
 
 /// The logs being followed, by the id the window gave each.
@@ -180,7 +209,14 @@ pub struct Follows(pub Mutex<HashMap<String, JoinHandle<()>>>);
 /// { id, lines: [{ at, line }], from, to, first, reset, truncated, error }.
 /// `plain`: read the file itself, not through encontra, whose pages leave
 /// out side-chain lines — every line of a sub-agent's own log is one.
-pub fn follow(app: AppHandle, follows: &Follows, id: String, on: Option<String>, file: String, plain: bool) {
+pub fn follow(
+    app: AppHandle,
+    follows: &Follows,
+    id: String,
+    on: Option<String>,
+    file: String,
+    plain: bool,
+) {
     let task_id = id.clone();
     let handle = tauri::async_runtime::spawn(async move {
         let emit = |v: Value| {
@@ -199,7 +235,9 @@ pub fn follow(app: AppHandle, follows: &Follows, id: String, on: Option<String>,
             let first = match search(on, &["page", "--file", &file, "--tail", &tail], 120).await {
                 Ok(Some(p)) if p.get("lines").is_some() => p,
                 Ok(Some(p)) => {
-                    emit(json!({ "id": task_id, "error": p.get("error").cloned().unwrap_or(json!("can't read the log")) }));
+                    emit(
+                        json!({ "id": task_id, "error": p.get("error").cloned().unwrap_or(json!("can't read the log")) }),
+                    );
                     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                     continue;
                 }
@@ -218,7 +256,13 @@ pub fn follow(app: AppHandle, follows: &Follows, id: String, on: Option<String>,
             // Then whatever is written next, as soon as it is.
             loop {
                 let from = offset.to_string();
-                match search(on, &["follow", "--file", &file, "--from", &from, "--wait", "20"], 45).await {
+                match search(
+                    on,
+                    &["follow", "--file", &file, "--from", &from, "--wait", "20"],
+                    45,
+                )
+                .await
+                {
                     Ok(Some(f)) if f.get("reset").and_then(Value::as_bool) == Some(true) => {
                         emit(json!({ "id": task_id, "reset": true }));
                         break;
@@ -226,12 +270,16 @@ pub fn follow(app: AppHandle, follows: &Follows, id: String, on: Option<String>,
                     Ok(Some(f)) if f.get("lines").is_some() => {
                         let to = f["to"].as_u64().unwrap_or(offset);
                         if f["lines"].as_array().is_some_and(|l| !l.is_empty()) {
-                            emit(json!({ "id": task_id, "lines": f["lines"], "from": offset, "to": to }));
+                            emit(
+                                json!({ "id": task_id, "lines": f["lines"], "from": offset, "to": to }),
+                            );
                         }
                         offset = to;
                     }
                     Ok(other) => {
-                        let e = other.and_then(|f| f.get("error").cloned()).unwrap_or(json!("can't follow the log"));
+                        let e = other
+                            .and_then(|f| f.get("error").cloned())
+                            .unwrap_or(json!("can't follow the log"));
                         emit(json!({ "id": task_id, "error": e }));
                         tokio::time::sleep(std::time::Duration::from_secs(3)).await;
                     }
@@ -258,7 +306,9 @@ pub fn unfollow(follows: &Follows, id: &str) {
 async fn plain_tail(emit: &impl Fn(Value), id: &str, on: Option<&str>, file: &str) {
     const START: u64 = 4 * 1024 * 1024;
     let size = |out: &hc::Out| out.stdout.trim().parse::<u64>().unwrap_or(0);
-    let Ok(out) = hc::sh(on, r#"wc -c < "$1""#, &[file], 30).await else { return };
+    let Ok(out) = hc::sh(on, r#"wc -c < "$1""#, &[file], 30).await else {
+        return;
+    };
     let mut offset = size(&out).saturating_sub(START);
     let mut first = true;
     loop {
@@ -267,7 +317,9 @@ async fn plain_tail(emit: &impl Fn(Value), id: &str, on: Option<&str>, file: &st
             Ok(out) if out.ok() => {
                 let (lines, next) = split_lines(&out.stdout, offset, first && offset > 0);
                 if first || !lines.is_empty() {
-                    emit(json!({ "id": id, "first": first, "lines": lines, "from": offset, "to": next, "truncated": first && offset > 0 }));
+                    emit(
+                        json!({ "id": id, "first": first, "lines": lines, "from": offset, "to": next, "truncated": first && offset > 0 }),
+                    );
                 }
                 first = false;
                 offset = next;
@@ -283,7 +335,9 @@ async fn plain_tail(emit: &impl Fn(Value), id: &str, on: Option<&str>, file: &st
 /// starts at, and where the next read starts (after the last complete line).
 /// `skip_first`: the read began mid-line.
 pub fn split_lines(text: &str, offset: u64, skip_first: bool) -> (Vec<Value>, u64) {
-    let Some(cut) = text.rfind('\n') else { return (vec![], offset) };
+    let Some(cut) = text.rfind('\n') else {
+        return (vec![], offset);
+    };
     let mut at = offset;
     let mut out = vec![];
     for (i, line) in text[..cut].split('\n').enumerate() {
@@ -305,16 +359,40 @@ mod tests {
 
     #[test]
     fn models_read_from_the_script() {
-        let got = parse_models("101\tglobal.anthropic.claude-opus-5-5\thigh\t2026-11-25T14:19:49.117Z\n202\t\t\t\nnot a pid\tx\n");
+        let got = parse_models(
+            "101\tglobal.anthropic.claude-opus-5-5\thigh\t2026-11-25T14:19:49.117Z\n202\t\t\t\nnot a pid\tx\n",
+        );
         assert_eq!(got.len(), 2);
-        assert_eq!(got[0], ModelOf { pid: 101, model: Some("global.anthropic.claude-opus-5-5".into()), effort: Some("high".into()), at: Some("2026-11-25T14:19:49.117Z".into()) });
-        assert_eq!(got[1], ModelOf { pid: 202, model: None, effort: None, at: None });
+        assert_eq!(
+            got[0],
+            ModelOf {
+                pid: 101,
+                model: Some("global.anthropic.claude-opus-5-5".into()),
+                effort: Some("high".into()),
+                at: Some("2026-11-25T14:19:49.117Z".into())
+            }
+        );
+        assert_eq!(
+            got[1],
+            ModelOf {
+                pid: 202,
+                model: None,
+                effort: None,
+                at: None
+            }
+        );
     }
 
     #[test]
     fn complete_lines_with_their_offsets() {
         let (lines, next) = split_lines("ab\ncdé\npartial", 10, false);
-        assert_eq!(lines, vec![json!({"at": 10, "line": "ab"}), json!({"at": 13, "line": "cdé"})]);
+        assert_eq!(
+            lines,
+            vec![
+                json!({"at": 10, "line": "ab"}),
+                json!({"at": 13, "line": "cdé"})
+            ]
+        );
         assert_eq!(next, 10 + 3 + 5, "bytes, not characters: é is two");
     }
 
