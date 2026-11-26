@@ -20,12 +20,17 @@ export function Composer({ address, working, blocked = false, annos = [], onSent
     else localStorage.removeItem(key);
   }, [key, text]);
 
-  // Grows with what's typed, up to a third of the window.
+  // Grows with what's typed, up to a third of the window. A scroll bar only
+  // once the text is taller than that: the chat's zoom makes the measured
+  // height a pixel off, which alone would show one.
   useLayoutEffect(() => {
     const el = box.current;
     if (!el) return;
+    const max = window.innerHeight / 3;
     el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, window.innerHeight / 3)}px`;
+    const needed = el.scrollHeight + 2;
+    el.style.height = `${Math.min(needed, max)}px`;
+    el.style.overflowY = needed > max ? "auto" : "hidden";
   }, [text]);
 
   useEffect(() => { box.current?.focus(); }, [address]);
