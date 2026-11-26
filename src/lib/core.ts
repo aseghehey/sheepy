@@ -59,8 +59,8 @@ export const core = {
   setGroup: (address: string, group: string) => invoke<void>("set_group", { address, group }),
   newSession: (machine: string | null, folder: string | null, group: string | null, model: string | null = null, effort: string | null = null, create = false) =>
     invoke<string>("new_session", { machine, folder, group, model, effort, create }),
-  folderState: (machine: string | null, folder: string) =>
-    invoke<{ state: "dir" | "file" | "missing" | "none"; path?: string }>("folder_state", { machine, folder }),
+  listDirs: (machine: string | null, folder: string) =>
+    invoke<{ state: "dir" | "missing" | "file" | "denied"; path: string; dirs: string[] }>("list_dirs", { machine, folder }),
   sshHosts: () => invoke<string[]>("ssh_hosts"),
   closeSession: (address: string) => invoke<void>("close_session", { address }),
   restartSession: (address: string, log: string) => invoke<string>("restart_session", { address, log }),

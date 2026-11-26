@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { EFFORTS, MODEL_CHOICES } from "../lib/models.js";
+import { NewSessionPalette } from "./NewSessionPalette";
+import { ErrorBoundary } from "./ErrorBoundary";
 import { core, machineOf } from "../lib/core";
 import { subagentRow, orderGroups, moveGroup } from "../lib/sessions.js";
 import { Machines, useHealth, Health } from "./Machines";
@@ -69,129 +70,6 @@ function SubAgents({ session, file, target, onSelect }: { session: Session; file
   );
 }
 
-/** A new session: where (a host and a folder) and which group. */
-// The last folder a session was started in, per host (a folder on this Mac
-// means nothing on another machine).
-const folderKey = (machine: string) => `new.folder:${machine || "local"}`;
-const lastFolder = (machine: string | null) => localStorage.getItem(folderKey(machine ?? "")) ?? "";
-
-function NewSession({ hosts, initial, folders, groups, onDone, onStarted }: {
-  hosts: string[]; initial: { machine: string | null; folder: string; group: string };
-  folders: (machine: string | null) => string[]; groups: (machine: string | null) => string[];
-  onDone: () => void; onStarted: (address: string, title: string) => void;
-}) {
-  const [machine, setMachine] = useState<string>(initial.machine ?? "");
-  const [folder, setFolder] = useState(initial.folder || lastFolder(initial.machine));
-  const [group, setGroup] = useState(initial.group);
-  // A group of the host's, or a new one typed in.
-  const [newGroup, setNewGroup] = useState(false);
-  const existing = groups(machine || null);
-  // Claude Code's defaults unless chosen; the last choice is kept.
-  const [model, setModel] = useState(() => localStorage.getItem("new.model") ?? "");
-  const [effort, setEffort] = useState(() => localStorage.getItem("new.effort") ?? "");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  // The folder as it is on the chosen host, checked as it's typed: there,
-  // not yet (Start then offers to create it), a file, or unknown.
-  const [where, setWhere] = useState<{ state: string; path?: string; error?: string } | null>(null);
-  const [missing, setMissing] = useState<string | null>(null);
-  useEffect(() => {
-    setMissing(null);
-    const f = folder.trim();
-    if (!f) { setWhere(null); return; }
-    let alive = true;
-    const t = setTimeout(() => {
-      core.folderState(machine || null, f)
-        .then((w) => alive && setWhere(w))
-        .catch((e) => alive && setWhere({ state: "unknown", error: String(e) }));
-    }, 400);
-    return () => { alive = false; clearTimeout(t); };
-  }, [machine, folder]);
-  const start = async (create = false) => {
-    setBusy(true);
-    setError(null);
-    try {
-      const address = await core.newSession(machine || null, folder || null, group || null, model || null, effort || null, create);
-      localStorage.setItem(folderKey(machine), folder);
-      localStorage.setItem("new.model", model);
-      localStorage.setItem("new.effort", effort);
-      onStarted(address, folder.split("/").filter(Boolean).pop() ?? "New session");
-      onDone();
-    } catch (e) {
-      const text = String(e);
-      if (text.startsWith("missing-folder:")) setMissing(text.slice("missing-folder:".length));
-      else setError(text);
-    } finally { setBusy(false); }
-  };
-  return (
-    <form className="new-session" onSubmit={(e) => { e.preventDefault(); start(); }}
-      onKeyDown={(e) => { if (e.key === "Escape") onDone(); }}>
-      <div className="form-title">New Claude Code session</div>
-      <label>Host
-        <select value={machine} onChange={(e) => { setMachine(e.target.value); setFolder(lastFolder(e.target.value || null)); }}>
-          <option value="">This computer</option>
-          {hosts.map((m) => <option key={m} value={m}>{m}</option>)}
-        </select>
-      </label>
-      <label>Folder on {machine || "this computer"}
-        <input autoFocus value={folder} placeholder="~ (home)" spellCheck={false} list="folders" onChange={(e) => setFolder(e.target.value)} />
-        <datalist id="folders">{folders(machine || null).map((f) => <option key={f} value={f} />)}</datalist>
-        {where && where.state !== "none" && (
-          <span className={`field-hint ${where.state}`}>
-            {where.state === "dir" ? "✓ Folder found"
-              : where.state === "missing" ? "Not there yet: Start offers to create it"
-              : where.state === "file" ? "That's a file, not a folder"
-              : `Couldn't check the folder: ${where.error ?? "no answer"}`}
-          </span>
-        )}
-      </label>
-      <label>Group
-        {newGroup ? (
-          <span className="inline">
-            <input autoFocus value={group} placeholder="Name the new group" onChange={(e) => setGroup(e.target.value)} />
-            <button type="button" className="link" onClick={() => { setNewGroup(false); setGroup(""); }}>Cancel</button>
-          </span>
-        ) : (
-          <select value={existing.includes(group) ? group : ""} onChange={(e) => {
-            if (e.target.value === "\u0000new") { setNewGroup(true); setGroup(""); } else setGroup(e.target.value);
-          }}>
-            <option value="">Ungrouped</option>
-            {existing.filter((g) => g !== "Ungrouped").map((g) => <option key={g} value={g}>{g}</option>)}
-            <option value={"\u0000new"}>New group…</option>
-          </select>
-        )}
-      </label>
-      <div className="form-row">
-        <label>Model
-          <select value={model} onChange={(e) => setModel(e.target.value)}>
-            <option value="">Claude's default</option>
-            {MODEL_CHOICES.filter((m) => m.id !== "default").map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
-          </select>
-        </label>
-        <label>Effort
-          <select value={effort} onChange={(e) => setEffort(e.target.value)}>
-            <option value="">Claude's default</option>
-            {EFFORTS.map((x) => <option key={x} value={x}>{x}</option>)}
-          </select>
-        </label>
-      </div>
-      {error && <div className="banner">{error}</div>}
-      {missing && (
-        <div className="banner ask">
-          <div><b>{missing}</b> doesn't exist on {machine || "this computer"}.</div>
-          <div className="form-actions">
-            <button type="button" onClick={() => setMissing(null)}>Change folder</button>
-            <button type="button" className="primary" disabled={busy} onClick={() => start(true)}>Create it and start</button>
-          </div>
-        </div>
-      )}
-      <div className="form-actions">
-        <button type="button" onClick={onDone}>Cancel</button>
-        <button type="submit" className="primary" disabled={busy || where?.state === "file"}>{busy ? "Starting…" : "Start"}</button>
-      </div>
-    </form>
-  );
-}
 
 interface Host { id: string; name: string; machine: string | null; status: string; groups: Win[] }
 
@@ -361,10 +239,12 @@ export function Sidebar({ hosts, target, logs, onSelect, onRegroup, modelOf, onC
       {moveError && <div className="banner">{moveError}</div>}
       {down.map((m) => <div key={m.name} className="banner">{m.name} is {m.state}</div>)}
       {starting && (
-        <NewSession hosts={choices} initial={starting} folders={folders}
+        <ErrorBoundary label="new session form">
+        <NewSessionPalette hosts={choices} initial={starting} folders={folders}
           groups={(m) => hosts.filter((h) => h.machine === m).flatMap((h) => h.groups.map((g) => g.name))}
           onDone={() => setStarting(null)}
           onStarted={(address, title) => { core.refreshNow().catch(() => {}); onSelect({ kind: "session", address, title }); }} />
+        </ErrorBoundary>
       )}
       <div className="sidebar-list">
         {hosts.every((h) => !h.groups.length) && !error && <div className="hint">No Claude Code sessions yet. Start one with +.</div>}

@@ -296,10 +296,65 @@ async fn claude_argv(machine: Option<&str>) -> Vec<String> {
     vec![path, "--dangerously-skip-permissions".into()]
 }
 
-/// The hosts in ~/.ssh/config (and the files it includes) a new session can
-/// go to: every `Host` name without wildcards or negations.
+/// The hosts in ~/.ssh/config a new session can go to: every `Host` name
+/// without wildcards or negations (config_hosts), except git servers, which
+/// take git over ssh but give no shell (github.com, a company's git host…).
+/// What ssh would use for each comes from `ssh -G`, which only reads the
+/// config.
 #[tauri::command]
-fn ssh_hosts() -> Vec<String> {
+async fn ssh_hosts() -> Vec<String> {
+    let mut set = tokio::task::JoinSet::new();
+    for (i, host) in config_hosts().into_iter().enumerate() {
+        set.spawn(async move {
+            let out = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                tokio::process::Command::new("ssh").args(["-G", "--", &host]).stdin(std::process::Stdio::null()).output(),
+            ).await;
+            let resolved = match out {
+                Ok(Ok(o)) if o.status.success() => String::from_utf8_lossy(&o.stdout).into_owned(),
+                _ => String::new(),
+            };
+            let (user, hostname) = ssh_user_and_hostname(&resolved);
+            (i, host.clone(), is_git_host(&host, user.as_deref(), hostname.as_deref()))
+        });
+    }
+    let mut out: Vec<(usize, String, bool)> = set.join_all().await;
+    out.sort();
+    out.into_iter().filter(|(_, _, git)| !git).map(|(_, h, _)| h).collect()
+}
+
+/// `user` and `hostname` from `ssh -G`'s answer.
+fn ssh_user_and_hostname(resolved: &str) -> (Option<String>, Option<String>) {
+    let mut user = None;
+    let mut hostname = None;
+    for line in resolved.lines() {
+        match line.split_once(' ') {
+            Some(("user", v)) => user = Some(v.trim().to_string()),
+            Some(("hostname", v)) => hostname = Some(v.trim().to_string()),
+            _ => {}
+        }
+    }
+    (user, hostname)
+}
+
+/// A git server rather than a machine to work on: it logs in as `git`, or
+/// its name or address is a git service's.
+fn is_git_host(name: &str, user: Option<&str>, hostname: Option<&str>) -> bool {
+    if user.is_some_and(|u| u == "git") {
+        return true;
+    }
+    let looks = |h: &str| {
+        let h = h.to_ascii_lowercase();
+        h.starts_with("git.") || h == "git"
+            || ["github", "gitlab", "bitbucket", "codecommit", "ssh.dev.azure.com", "vs-ssh.visualstudio.com", "gitea", "codeberg"]
+                .iter().any(|k| h.contains(k))
+    };
+    looks(name) || hostname.is_some_and(looks)
+}
+
+/// Every `Host` name in ~/.ssh/config and the files it includes, without
+/// wildcards or negations.
+fn config_hosts() -> Vec<String> {
     let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) else { return vec![] };
     let mut seen = std::collections::BTreeSet::new();
     let mut files = vec![home.join(".ssh/config")];
@@ -568,16 +623,42 @@ fn parse_folder_state(text: &str) -> Option<(String, String)> {
     matches!(s, "dir" | "file" | "missing").then(|| (s.to_string(), p.to_string()))
 }
 
-/// Whether a folder is there on a machine, for the New session form.
+/// The folders in a folder on `machine` ("~" meaning its home), for picking
+/// one as it's typed: { path, state: dir | missing | file | denied, dirs }.
+/// At most 2000 names, hidden ones included (the window decides).
 #[tauri::command]
-async fn folder_state(machine: Option<String>, folder: String) -> Result<Value, String> {
+async fn list_dirs(machine: Option<String>, folder: String) -> Result<Value, String> {
     let folder = folder.trim();
-    if folder.is_empty() || folder.starts_with('-') {
-        return Ok(serde_json::json!({ "state": "none" }));
+    let folder = if folder.is_empty() { "~" } else { folder };
+    if folder.starts_with('-') {
+        return Err("not a folder".into());
     }
-    let (state, path) = folder_state_on(machine.as_deref(), folder).await?;
-    Ok(serde_json::json!({ "state": state, "path": path }))
+    let script = r#"d=$1
+case "$d" in "~") d=$HOME ;; "~/"*) d="$HOME/${d#??}" ;; esac
+if [ ! -e "$d" ]; then printf 'missing\t%s\n' "$d"; exit 0; fi
+if [ ! -d "$d" ]; then printf 'file\t%s\n' "$d"; exit 0; fi
+cd -- "$d" 2>/dev/null || { printf 'denied\t%s\n' "$d"; exit 0; }
+printf 'dir\t%s\n' "$d"
+ls -1Ap 2>/dev/null | sed -n 's#/$##p' | head -n 2000"#;
+    let out = hc::sh(machine.as_deref(), script, &[folder], 20).await?;
+    parse_dir_list(&out.stdout).ok_or_else(|| {
+        let e = out.stderr.trim();
+        if e.is_empty() { "no answer".to_string() } else { e.lines().last().unwrap_or(e).to_string() }
+    })
 }
+
+/// The list_dirs script's answer: its state line (after anything a login
+/// shell printed), then one folder name per line.
+fn parse_dir_list(text: &str) -> Option<Value> {
+    let mut lines = text.lines();
+    let (state, path) = lines.by_ref().find_map(|l| {
+        let (s, p) = l.split_once('\t')?;
+        matches!(s, "dir" | "missing" | "file" | "denied").then(|| (s.to_string(), p.to_string()))
+    })?;
+    let dirs: Vec<&str> = lines.filter(|l| !l.is_empty()).collect();
+    Some(serde_json::json!({ "state": state, "path": path, "dirs": dirs }))
+}
+
 
 /// Claude Code's own flags for a new session's model and effort, when chosen
 /// (else its defaults). Only names Claude Code could take.
@@ -712,7 +793,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             terminals, terminal, send, keys, interrupt, screen, locate, subagents, page, search, follow, unfollow,
-            machines, machine_add, models, folder_state, save_snapshot, resume, machine_stats, set_group, new_session, ssh_hosts,
+            machines, machine_add, models, list_dirs, save_snapshot, resume, machine_stats, set_group, new_session, ssh_hosts,
             close_session, log_dir, restart, newer_installed, refresh_now, restart_session
         ])
         .run(tauri::generate_context!())
@@ -722,6 +803,59 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn git_servers_are_not_hosts_to_work_on() {
+        assert!(is_git_host("github.example.com", Some("git"), Some("github.example.com")));
+        assert!(is_git_host("work-git", Some("git"), Some("10.0.0.5")), "logs in as git");
+        assert!(is_git_host("git.example.com", Some("me"), Some("git.example.com")), "a git. name");
+        assert!(is_git_host("gh", Some("me"), Some("github.com")), "an alias for github");
+        assert!(is_git_host("GitLab", None, None));
+        assert!(is_git_host("repo", Some("me"), Some("ssh.dev.azure.com")));
+        assert!(!is_git_host("devdesk", Some("me"), Some("dev-box-1.example.com")));
+        assert!(!is_git_host("build-box", Some("me"), Some("10.0.0.7")));
+        assert!(!is_git_host("digit", Some("me"), Some("digit.example.com")), "git inside a word isn't a git server");
+        assert!(!is_git_host("devdesk", None, None), "ssh couldn't say: kept");
+    }
+
+    #[test]
+    fn ssh_g_answers_read() {
+        let (u, h) = ssh_user_and_hostname("host devdesk\nuser me\nhostname dev.example.com\nport 22\n");
+        assert_eq!(u.as_deref(), Some("me"));
+        assert_eq!(h.as_deref(), Some("dev.example.com"));
+        assert_eq!(ssh_user_and_hostname(""), (None, None));
+    }
+
+    #[test]
+    fn dir_lists_read_from_the_script() {
+        let v = parse_dir_list("motd\ndir\t/home/me\n.config\ncode\nmy files\n").unwrap();
+        assert_eq!(v["state"], "dir");
+        assert_eq!(v["path"], "/home/me");
+        assert_eq!(v["dirs"], serde_json::json!([".config", "code", "my files"]));
+        assert_eq!(parse_dir_list("missing\t/w/new\n").unwrap()["dirs"], serde_json::json!([]));
+        assert!(parse_dir_list("").is_none());
+    }
+
+    #[tokio::test]
+    async fn list_dirs_on_this_computer() {
+        let base = std::env::temp_dir().join(format!("sheepy-dirs-{}", std::process::id()));
+        std::fs::create_dir_all(base.join("alpha")).unwrap();
+        std::fs::create_dir_all(base.join("with space")).unwrap();
+        std::fs::create_dir_all(base.join(".hidden")).unwrap();
+        std::fs::write(base.join("a-file.txt"), "x").unwrap();
+        let v = list_dirs(None, base.to_string_lossy().into_owned()).await.unwrap();
+        assert_eq!(v["state"], "dir");
+        let mut dirs: Vec<String> = serde_json::from_value(v["dirs"].clone()).unwrap();
+        dirs.sort();
+        assert_eq!(dirs, vec![".hidden", "alpha", "with space"]);
+        let missing = list_dirs(None, base.join("nope").to_string_lossy().into_owned()).await.unwrap();
+        assert_eq!(missing["state"], "missing");
+        let file = list_dirs(None, base.join("a-file.txt").to_string_lossy().into_owned()).await.unwrap();
+        assert_eq!(file["state"], "file");
+        let home = list_dirs(None, "~".into()).await.unwrap();
+        assert_eq!(home["path"], std::env::var("HOME").unwrap());
+        let _ = std::fs::remove_dir_all(&base);
+    }
 
     #[test]
     fn folder_states_read_from_the_script() {
