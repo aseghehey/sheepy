@@ -6,7 +6,7 @@ import type { Target } from "./Sidebar";
 type Tab = "search" | "archived";
 
 /**
- * ⌘K: search what was said in every session on every machine (herdr-search),
+ * ⌘K: search what was said in every session on every machine (encontra),
  * or browse recent sessions that aren't running: resume one, or rename it.
  * Opening a running one goes to its conversation.
  */

@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { core, type Facts } from "./lib/core";
-import { hosts, mergeFacts } from "./lib/sessions.js";
+import { hosts, mergeFacts, withMoves, pendingMoves } from "./lib/sessions.js";
 import { Sidebar, type Target } from "./components/Sidebar";
 import { Chat } from "./components/Chat";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Palette } from "./components/Palette";
 import { CommandPalette } from "./components/CommandPalette";
 import { useView } from "./components/ViewMenu";
+import { useModels } from "./components/ModelMenu";
+import { modelLabel } from "./lib/models.js";
 import type { Machine } from "./lib/core";
 
 export default function App() {
@@ -68,7 +70,24 @@ export default function App() {
   }, []);
   const reachable = useMemo(() => [null, ...machines.filter((m) => m.state === "connected").map((m) => m.name)], [machines]);
 
-  const list = useMemo(() => hosts(facts?.terminals ?? [], machines), [facts, machines]);
+  // Moving sessions to a group shows at once; herdr-core's next picture
+  // (asked for right away) confirms it, and a failed move goes back.
+  const [moves, setMoves] = useState<Record<string, string>>({});
+  useEffect(() => { setMoves((m) => (Object.keys(m).length ? (pendingMoves(facts?.terminals ?? [], m) as Record<string, string>) : m)); }, [facts]);
+  const regroup = async (addresses: string[], group: string) => {
+    setMoves((m) => ({ ...m, ...Object.fromEntries(addresses.map((a) => [a, group])) }));
+    try {
+      await Promise.all(addresses.map((a) => core.setGroup(a, group)));
+    } catch (e) {
+      setMoves((m) => Object.fromEntries(Object.entries(m).filter(([a]) => !addresses.includes(a))));
+      throw e;
+    } finally {
+      core.refreshNow().catch(() => {});
+    }
+  };
+  const list = useMemo(() => hosts(withMoves(facts?.terminals ?? [], moves), machines), [facts, moves, machines]);
+  // Each session's model and effort, from its log (and changes made here).
+  const models = useModels(facts?.terminals ?? []);
   const terminal = target ? (facts?.terminals ?? []).find((t) => t.address === target.address) ?? null : null;
 
   return (
@@ -89,6 +108,8 @@ export default function App() {
         target={target}
         logs={logs}
         onSelect={setTarget}
+        onRegroup={regroup}
+        modelOf={(address) => modelLabel(models.shown(address))}
         onClosed={(addresses) => setTarget((t) => (t && addresses.includes(t.address) ? null : t))}
         error={coreError}
         machines={machines}
@@ -105,6 +126,8 @@ export default function App() {
             onOpenSubagent={(t) => setTarget(t)}
             view={view}
             setView={setView}
+            model={models.shown(target.address)}
+            onModelChanged={(c) => { models.changed(target.address, c); setTimeout(models.read, 1500); }}
           />
           </ErrorBoundary>
         ) : (

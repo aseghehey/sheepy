@@ -1,14 +1,14 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { core } from "../lib/core";
 import { annotationMessage } from "../lib/anno.js";
-import { parsePrompt, choose, freeTextOption } from "../lib/prompt.js";
+import { parsePrompt, freeTextOption, toFreeText } from "../lib/prompt.js";
 import type { Anno } from "./Annotations";
 
 // The message box: Enter sends, Shift+Enter starts a new line, Escape (or
 // Stop) interrupts a working agent. What's typed and not sent is kept per
 // session. It's a plain text area: the Mac's own editing, spelling, Look Up,
 // Services and right-click menu come with it.
-export function Composer({ address, working, blocked = false, annos = [], onSentAnnos }: { address: string; working: boolean; blocked?: boolean; annos?: Anno[]; onSentAnnos?: () => void }) {
+export function Composer({ address, working, blocked = false, annos = [], onSentAnnos, onSent }: { address: string; working: boolean; blocked?: boolean; annos?: Anno[]; onSentAnnos?: () => void; onSent?: (text: string, working: boolean) => void }) {
   const key = `draft:${address}`;
   const [text, setText] = useState(() => localStorage.getItem(key) ?? "");
   const [error, setError] = useState<string | null>(null);
@@ -20,12 +20,17 @@ export function Composer({ address, working, blocked = false, annos = [], onSent
     else localStorage.removeItem(key);
   }, [key, text]);
 
-  // Grows with what's typed, up to a third of the window.
+  // Grows with what's typed, up to a third of the window. A scroll bar only
+  // once the text is taller than that: the chat's zoom makes the measured
+  // height a pixel off, which alone would show one.
   useLayoutEffect(() => {
     const el = box.current;
     if (!el) return;
+    const max = window.innerHeight / 3;
     el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, window.innerHeight / 3)}px`;
+    const needed = el.scrollHeight + 2;
+    el.style.height = `${Math.min(needed, max)}px`;
+    el.style.overflowY = needed > max ? "auto" : "hidden";
   }, [text]);
 
   useEffect(() => { box.current?.focus(); }, [address]);
@@ -44,6 +49,7 @@ export function Composer({ address, working, blocked = false, annos = [], onSent
         await answerWith(message);
       }
       setText("");
+      onSent?.(message, working);
       if (annos.length) onSentAnnos?.();
     } catch (e) {
       setError(String(e).replace(/^blocked: /, ""));
@@ -60,9 +66,9 @@ export function Composer({ address, working, blocked = false, annos = [], onSent
     const q = parsePrompt(await core.screen(address, 60));
     const i = q ? freeTextOption(q.options) : -1;
     if (!q || i < 0) throw new Error("The agent is waiting on a question: answer it in the card above (or press Esc there to dismiss it).");
-    // Only move to it (no Enter: that could submit it empty), then type the
-    // answer and press Enter once.
-    const moves = choose(q.selected, i).slice(0, -1);
+    // Only move to it (no Enter: that could submit it empty) and empty what's
+    // typed there, then type the answer and press Enter once.
+    const moves = toFreeText(q, i);
     if (moves.length) await core.keys(address, moves);
     await new Promise((r) => setTimeout(r, 300));
     await core.send(address, message, true);
@@ -78,7 +84,7 @@ export function Composer({ address, working, blocked = false, annos = [], onSent
           ref={box}
           value={text}
           rows={1}
-          placeholder={blocked ? "Answer the question above, or type your own answer" : "Message Claude"}
+          placeholder={blocked ? "Answer the question above, or type your own answer" : working ? "Message Claude (it's queued until Claude is ready)" : "Message Claude"}
           spellCheck
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {

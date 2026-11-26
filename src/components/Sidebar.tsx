@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { NewSessionPalette } from "./NewSessionPalette";
+import { ErrorBoundary } from "./ErrorBoundary";
 import { core, machineOf } from "../lib/core";
 import { subagentRow, orderGroups, moveGroup } from "../lib/sessions.js";
 import { Machines, useHealth, Health } from "./Machines";
@@ -68,78 +70,13 @@ function SubAgents({ session, file, target, onSelect }: { session: Session; file
   );
 }
 
-/** A new session: where (a host and a folder) and which group. */
-// The last folder a session was started in, per host (a folder on this Mac
-// means nothing on another machine).
-const folderKey = (machine: string) => `new.folder:${machine || "local"}`;
-const lastFolder = (machine: string | null) => localStorage.getItem(folderKey(machine ?? "")) ?? "";
-
-function NewSession({ hosts, initial, folders, groups, onDone, onStarted }: {
-  hosts: string[]; initial: { machine: string | null; folder: string; group: string };
-  folders: (machine: string | null) => string[]; groups: (machine: string | null) => string[];
-  onDone: () => void; onStarted: (address: string, title: string) => void;
-}) {
-  const [machine, setMachine] = useState<string>(initial.machine ?? "");
-  const [folder, setFolder] = useState(initial.folder || lastFolder(initial.machine));
-  const [group, setGroup] = useState(initial.group);
-  // A group of the host's, or a new one typed in.
-  const [newGroup, setNewGroup] = useState(false);
-  const existing = groups(machine || null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const start = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      const address = await core.newSession(machine || null, folder || null, group || null);
-      localStorage.setItem(folderKey(machine), folder);
-      onStarted(address, folder.split("/").filter(Boolean).pop() ?? "New session");
-      onDone();
-    } catch (e) { setError(String(e)); } finally { setBusy(false); }
-  };
-  return (
-    <form className="new-session" onSubmit={(e) => { e.preventDefault(); start(); }}
-      onKeyDown={(e) => { if (e.key === "Escape") onDone(); }}>
-      <div className="form-title">New Claude Code session</div>
-      <label>Host
-        <select value={machine} onChange={(e) => { setMachine(e.target.value); setFolder(lastFolder(e.target.value || null)); }}>
-          <option value="">This computer</option>
-          {hosts.map((m) => <option key={m} value={m}>{m}</option>)}
-        </select>
-      </label>
-      <label>Folder on {machine || "this computer"}
-        <input autoFocus value={folder} placeholder="~ (home)" spellCheck={false} list="folders" onChange={(e) => setFolder(e.target.value)} />
-        <datalist id="folders">{folders(machine || null).map((f) => <option key={f} value={f} />)}</datalist>
-      </label>
-      <label>Group
-        {newGroup ? (
-          <span className="inline">
-            <input autoFocus value={group} placeholder="Name the new group" onChange={(e) => setGroup(e.target.value)} />
-            <button type="button" className="link" onClick={() => { setNewGroup(false); setGroup(""); }}>Cancel</button>
-          </span>
-        ) : (
-          <select value={existing.includes(group) ? group : ""} onChange={(e) => {
-            if (e.target.value === "\u0000new") { setNewGroup(true); setGroup(""); } else setGroup(e.target.value);
-          }}>
-            <option value="">Ungrouped</option>
-            {existing.filter((g) => g !== "Ungrouped").map((g) => <option key={g} value={g}>{g}</option>)}
-            <option value={"\u0000new"}>New group…</option>
-          </select>
-        )}
-      </label>
-      {error && <div className="banner">{error}</div>}
-      <div className="form-actions">
-        <button type="button" onClick={onDone}>Cancel</button>
-        <button type="submit" className="primary" disabled={busy}>{busy ? "Starting…" : "Start"}</button>
-      </div>
-    </form>
-  );
-}
 
 interface Host { id: string; name: string; machine: string | null; status: string; groups: Win[] }
 
-export function Sidebar({ hosts, target, logs, onSelect, onClosed, error, machines }: {
+export function Sidebar({ hosts, target, logs, onSelect, onRegroup, modelOf, onClosed, error, machines }: {
   hosts: Host[]; target: Target | null; logs: Record<string, string>; onSelect: (t: Target) => void;
+  onRegroup: (addresses: string[], group: string) => Promise<void>;
+  modelOf: (address: string) => string | null;
   onClosed: (addresses: string[]) => void; error: string | null; machines: { name: string; state: string }[];
 }) {
   const [folded, toggle] = useFolded();
@@ -206,15 +143,13 @@ export function Sidebar({ hosts, target, logs, onSelect, onClosed, error, machin
     window.addEventListener("sheepy:close-group", all);
     return () => { window.removeEventListener("sheepy:close-session", one); window.removeEventListener("sheepy:close-group", all); };
   });
-  const move = (address: string, group: string) => core.setGroup(address, group).then(() => setMoveError(null)).catch((e) => setMoveError(String(e)));
+  const move = (address: string, group: string) => { setMoveError(null); onRegroup([address], group).catch((e) => setMoveError(String(e))); };
   const renameGroup = async (g: Win, name: string) => {
     setRenaming(null);
     const clean = name.replace(/\s+/g, " ").trim();
     if (!clean || clean === g.name) return;
-    try {
-      await Promise.all(g.sessions.map((s) => core.setGroup(s.address, clean)));
-      setMoveError(null);
-    } catch (e) { setMoveError(String(e)); }
+    setMoveError(null);
+    try { await onRegroup(g.sessions.map((s) => s.address), clean); } catch (e) { setMoveError(String(e)); }
   };
 
   // The person's order of a host's groups (drag a group's header onto another).
@@ -279,6 +214,7 @@ export function Sidebar({ hosts, target, logs, onSelect, onClosed, error, machin
                 onClick={() => onSelect({ kind: "session", address: s.address, title: s.title })}>
                 <StatusDot status={s.status} />
                 <span className="label">{isClosing ? `Closing ${s.title}…` : s.title}</span>
+                {!isClosing && modelOf(s.address) && <span className="row-model" title="Model · effort">{modelOf(s.address)}</span>}
                 <span className="row-x" role="button" title="Close this session…"
                   onClick={(e) => { e.stopPropagation(); closeSessions([s], `“${s.title}”`); }}>×</span>
               </button>
@@ -303,10 +239,12 @@ export function Sidebar({ hosts, target, logs, onSelect, onClosed, error, machin
       {moveError && <div className="banner">{moveError}</div>}
       {down.map((m) => <div key={m.name} className="banner">{m.name} is {m.state}</div>)}
       {starting && (
-        <NewSession hosts={choices} initial={starting} folders={folders}
+        <ErrorBoundary label="new session form">
+        <NewSessionPalette hosts={choices} initial={starting} folders={folders}
           groups={(m) => hosts.filter((h) => h.machine === m).flatMap((h) => h.groups.map((g) => g.name))}
           onDone={() => setStarting(null)}
           onStarted={(address, title) => { core.refreshNow().catch(() => {}); onSelect({ kind: "session", address, title }); }} />
+        </ErrorBoundary>
       )}
       <div className="sidebar-list">
         {hosts.every((h) => !h.groups.length) && !error && <div className="hint">No Claude Code sessions yet. Start one with +.</div>}

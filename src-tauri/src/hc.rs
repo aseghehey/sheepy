@@ -57,10 +57,7 @@ pub async fn exec(on: Option<&str>, argv: &[String], timeout: u64) -> Result<Out
     match on {
         None => {
             let (prog, rest) = argv.split_first().ok_or("nothing to run")?;
-            let child = Command::new(prog)
-                .args(rest)
-                .stdin(Stdio::null())
-                .output();
+            let child = Command::new(prog).args(rest).stdin(Stdio::null()).output();
             let out = tokio::time::timeout(std::time::Duration::from_secs(timeout), child)
                 .await
                 .map_err(|_| format!("{prog} took longer than {timeout}s"))?
@@ -73,7 +70,15 @@ pub async fn exec(on: Option<&str>, argv: &[String], timeout: u64) -> Result<Out
         }
         Some(machine) => {
             let t = timeout.to_string();
-            let mut args = vec!["exec", "--json", "--on", machine, "--timeout", t.as_str(), "--"];
+            let mut args = vec![
+                "exec",
+                "--json",
+                "--on",
+                machine,
+                "--timeout",
+                t.as_str(),
+                "--",
+            ];
             args.extend(argv.iter().map(String::as_str));
             let out = run(&args).await?;
             if !out.ok() && out.stdout.trim().is_empty() {
@@ -101,8 +106,18 @@ pub async fn exec(on: Option<&str>, argv: &[String], timeout: u64) -> Result<Out
 }
 
 /// `sh -c script` with `args` as $1.., on `on`.
-pub async fn sh(on: Option<&str>, script: &str, args: &[&str], timeout: u64) -> Result<Out, String> {
-    let mut argv = vec!["sh".to_string(), "-c".to_string(), script.to_string(), "sh".to_string()];
+pub async fn sh(
+    on: Option<&str>,
+    script: &str,
+    args: &[&str],
+    timeout: u64,
+) -> Result<Out, String> {
+    let mut argv = vec![
+        "sh".to_string(),
+        "-c".to_string(),
+        script.to_string(),
+        "sh".to_string(),
+    ];
     argv.extend(args.iter().map(|s| s.to_string()));
     exec(on, &argv, timeout).await
 }
@@ -119,7 +134,9 @@ mod tests {
 
     #[tokio::test]
     async fn local_exec_runs_directly() {
-        let out = sh(None, "echo \"$1\"; echo e >&2; exit 4", &["hi there"], 5).await.unwrap();
+        let out = sh(None, "echo \"$1\"; echo e >&2; exit 4", &["hi there"], 5)
+            .await
+            .unwrap();
         assert_eq!(out.code, 4);
         assert_eq!(out.stdout, "hi there\n");
         assert_eq!(out.stderr, "e\n");

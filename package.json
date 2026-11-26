@@ -9,7 +9,12 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "app:dev": "tauri dev --config src-tauri/tauri.dev.conf.json",
-    "app:stable": "sh scripts/install-stable.sh"
+    "app:stable": "sh scripts/install-stable.sh",
+    "test": "node --test test/*.test.js && vitest run",
+    "test:logic": "node --test test/*.test.js",
+    "test:ui": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck && npm test && cd src-tauri && cargo fmt --check && cargo clippy --all-targets --locked -- -D warnings && cargo test --locked"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
@@ -26,11 +31,15 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",
+    "@testing-library/dom": "^10.4.2",
+    "@testing-library/react": "^16.3.3",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^6.0.2",
     "html-to-image": "^1.11.13",
+    "jsdom": "^31.0.1",
     "typescript": "~6.0.3",
-    "vite": "^8.0.16"
+    "vite": "^8.0.16",
+    "vitest": "^5.1.2"
   }
 }

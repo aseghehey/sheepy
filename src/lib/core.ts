@@ -53,10 +53,14 @@ export const core = {
   machineAdd: (target: string, name?: string) => invoke<unknown>("machine_add", { target, name: name ?? null }),
   resume: (machine: string | null, project: string, session: string, title?: string) =>
     invoke<string>("resume", { machine, project, session, title: title ?? null }),
+  models: (machine: string | null, pids: number[]) =>
+    invoke<{ pid: number; model: string | null; effort: string | null; at: string | null }[]>("models", { machine, pids }),
   machineStats: (machine: string | null) => invoke<string>("machine_stats", { machine }),
   setGroup: (address: string, group: string) => invoke<void>("set_group", { address, group }),
-  newSession: (machine: string | null, folder: string | null, group: string | null) =>
-    invoke<string>("new_session", { machine, folder, group }),
+  newSession: (machine: string | null, folder: string | null, group: string | null, model: string | null = null, effort: string | null = null, create = false) =>
+    invoke<string>("new_session", { machine, folder, group, model, effort, create }),
+  listDirs: (machine: string | null, folder: string) =>
+    invoke<{ state: "dir" | "missing" | "file" | "denied"; path: string; dirs: string[] }>("list_dirs", { machine, folder }),
   sshHosts: () => invoke<string[]>("ssh_hosts"),
   closeSession: (address: string) => invoke<void>("close_session", { address }),
   restartSession: (address: string, log: string) => invoke<string>("restart_session", { address, log }),

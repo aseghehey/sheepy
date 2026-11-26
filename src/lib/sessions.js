@@ -45,7 +45,7 @@ export function statusOf(t) {
 
 /** What the agent says it's doing now, if anything. */
 export function activityOf(t) {
-  return typeof t?.status === "object" ? (t.status.msg ?? null) : null;
+  return typeof t?.status === "object" ? (t.status?.msg ?? null) : null;
 }
 
 /** A session's name: its terminal's title (Claude Code sets it from the session's name), else its folder's last part. */
@@ -172,4 +172,22 @@ export function moveGroup(ids, id, before) {
   const at = before == null ? rest.length : rest.indexOf(before);
   rest.splice(at < 0 ? rest.length : at, 0, id);
   return rest;
+}
+
+// Moves the person just made (address → group), shown at once, before
+// herdr-core's next picture has them: the terminals with those groups.
+export function withMoves(terminals, moves) {
+  const list = terminals ?? [];
+  if (!moves || !Object.keys(moves).length) return list;
+  return list.map((t) => (t.address in moves ? { ...t, labels: { ...t.labels, [GROUP_LABEL]: moves[t.address] } } : t));
+}
+
+// The moves herdr-core's picture doesn't show yet (the rest are done).
+export function pendingMoves(terminals, moves) {
+  const out = {};
+  for (const [address, group] of Object.entries(moves ?? {})) {
+    const t = (terminals ?? []).find((x) => x.address === address);
+    if (t && cleanGroup(t.labels?.[GROUP_LABEL]) !== cleanGroup(group)) out[address] = group;
+  }
+  return out;
 }

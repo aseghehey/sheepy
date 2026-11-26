@@ -3,9 +3,10 @@ import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { core, machineOf, type Terminal, type SubAgent } from "../lib/core";
 import { Transcript } from "../lib/parse.js";
 import { statusOf, activityOf, subagentRow } from "../lib/sessions.js";
-import { Markdown } from "./Markdown";
+import { Markdown, copyToClipboard } from "./Markdown";
 import { Composer } from "./Composer";
 import { QuestionCard } from "./QuestionCard";
+import { ModelMenu, type Shown } from "./ModelMenu";
 import { StatusDot, type Target } from "./Sidebar";
 import { ViewMenu, type View } from "./ViewMenu";
 import { Confirm, type ConfirmRequest } from "./Confirm";
@@ -13,6 +14,7 @@ import { viewStyle } from "../lib/view.js";
 import { QuoteLayer, AnnotationTray, useAnnotations } from "./Annotations";
 import { findEntries, queryWords, step } from "../lib/findin.js";
 import { markWords } from "../lib/find.js";
+import { queuedView, stillPending } from "../lib/queue.js";
 
 type Entry = any;
 
@@ -44,7 +46,7 @@ function useTranscript(id: string, machine: string | null, file: string | null, 
     return () => { alive = false; off.then((u) => u()); core.unfollow(id); };
   }, [id, machine, file, sidechain]);
 
-  // Earlier history, page by page (each within herdr-search's output budget),
+  // Earlier history, page by page (each within encontra's output budget),
   // back to `target` (a log offset) or about 2 MB further. At most 40 pages.
   const loadEarlier = async (target?: number) => {
     if (!file || sidechain || fromRef.current <= 0) return;
@@ -100,6 +102,19 @@ function ToolGroup({ items, subagents, onOpenSubagent }: { items: any[]; subagen
   );
 }
 
+/** Copies a whole message (its text as written, Markdown included). */
+function CopyMessage({ text, side }: { text: string; side: "mine" | "theirs" }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className={`msg-actions ${side}`}>
+      <button className={copied ? "done" : ""} title="Copy this message"
+        onClick={async () => { await copyToClipboard(text); setCopied(true); setTimeout(() => setCopied(false), 1500); }}>
+        {copied ? "Copied" : "Copy"}
+      </button>
+    </div>
+  );
+}
+
 function EntryView({ e, subagents, onOpenSubagent, words }: { e: Entry; subagents: SubAgent[]; onOpenSubagent: (s: SubAgent) => void; words?: string[] }) {
   const mark = (t: string) => (words?.length ? markWords(t, words) : t);
   switch (e.kind) {
@@ -110,10 +125,11 @@ function EntryView({ e, subagents, onOpenSubagent, words }: { e: Entry; subagent
             {e.text && (e.command ? <code>{e.text}</code> : <Markdown text={mark(e.text)} />)}
             {(e.images ?? []).map((im: any, i: number) => <img key={i} className="msg-img" src={`data:image/${im.ext ?? "png"};base64,${im.data}`} />)}
           </div>
+          {e.text && <CopyMessage text={e.text} side="mine" />}
         </div>
       );
     case "assistant":
-      return <div className="msg-row theirs"><Markdown text={mark(e.text)} /></div>;
+      return <div className="msg-row theirs"><Markdown text={mark(e.text)} /><CopyMessage text={e.text} side="theirs" /></div>;
     case "tools":
       return <ToolGroup items={e.items} subagents={subagents} onOpenSubagent={onOpenSubagent} />;
     case "note":
@@ -127,8 +143,9 @@ function EntryView({ e, subagents, onOpenSubagent, words }: { e: Entry; subagent
   }
 }
 
-export function Chat({ target, terminal, onLog, onOpenSubagent, view, setView }: {
+export function Chat({ target, terminal, onLog, onOpenSubagent, view, setView, model, onModelChanged }: {
   target: Target; terminal: Terminal | null;
+  model: Shown; onModelChanged: (c: { model?: string; effort?: string }) => void;
   onLog: (address: string, file: string) => void; onOpenSubagent: (t: Target) => void;
   view: View; setView: (c: Partial<View>) => void;
 }) {
@@ -234,6 +251,17 @@ export function Chat({ target, terminal, onLog, onOpenSubagent, view, setView }:
     if (next >= 0) list.current?.scrollToIndex({ index: hits[next], align: "center", behavior: "smooth" });
   };
   const notes = useAnnotations(target.address);
+  // Messages sent while Claude works: queued (its own queue, as its log
+  // says, and what was sent from here) until they're in the conversation.
+  const [pending, setPending] = useState<{ id: string; text: string; at: number; working: boolean }[]>([]);
+  const busy = status === "working" || status === "blocked";
+  useEffect(() => { setPending((p) => { const keep = stillPending(p, transcript?.entries ?? [], Date.now(), busy); return keep.length === p.length ? p : keep; }); }, [version, busy]);
+  // Idle again: what's still shown goes once it's 15 s old.
+  useEffect(() => {
+    if (busy || !pending.length) return;
+    const t = setTimeout(() => setPending((p) => stillPending(p, transcript?.entries ?? [], Date.now(), false)), 16000);
+    return () => clearTimeout(t);
+  }, [busy, pending, transcript]);
   // Restarting the session: Claude Code again on this conversation.
   const [confirmRestart, setConfirmRestart] = useState<ConfirmRequest | null>(null);
   const [restarting, setRestarting] = useState(false);
@@ -296,6 +324,7 @@ export function Chat({ target, terminal, onLog, onOpenSubagent, view, setView }:
             onDoubleClick={() => { if (!isSub) { setNewName(title); setRenaming(true); } }}>{title}</div>
         )}
         <div className="chat-sub" style={{ flex: 1 }}>{isSub ? "sub-agent" : [machine ?? "this computer", terminal?.foreground?.cwd?.replace(/^\/(local\/)?home\/[^/]+/, "~")].filter(Boolean).join(" · ")}</div>
+        {!isSub && <ModelMenu address={target.address} status={status} shown={model} onChanged={onModelChanged} />}
         <button className={`head-btn ${finding ? "on" : ""}`} title="Find in this conversation (⌘F)" onClick={() => { setFinding(!finding); setTimeout(() => findBox.current?.focus(), 0); }}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
         </button>
@@ -353,7 +382,23 @@ export function Chat({ target, terminal, onLog, onOpenSubagent, view, setView }:
                 <button className="link" disabled={earlier} onClick={() => loadEarlier()}>{earlier ? "Loading earlier messages…" : "Load earlier messages"}</button>
               </div>
             ) : <div style={{ height: 12 }} />),
-            Footer: () => <div style={{ height: 16 }} />,
+            Footer: () => (
+              <div className="queued-list">
+                {queuedView(pending, entries, transcript?.queue ?? [], busy).map((m: any) => (
+                  <div key={m.id} className="entry">
+                    <div className="msg-row mine">
+                      <div className={`bubble queued ${m.state}`}>
+                        <Markdown text={m.text} />
+                        <div className="queued-tag">
+                          {m.state === "queued" ? <>◷ Queued · sends when Claude is ready</> : <>Sending…</>}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+                <div style={{ height: 16 }} />
+              </div>
+            ),
           }}
           itemContent={(i, e) => (
             <div className={`entry ${hit >= 0 && hits[hit] === i ? "found" : ""}`}>
@@ -371,7 +416,11 @@ export function Chat({ target, terminal, onLog, onOpenSubagent, view, setView }:
           {status === "working" && <div className="activity"><span className="spinner" /> {activityOf(terminal) ?? "Working…"}</div>}
           {status === "blocked" && <QuestionCard address={target.address} transcript={transcript} version={version} />}
           <AnnotationTray {...notes} />
-          <Composer address={target.address} working={status === "working"} blocked={status === "blocked"} annos={notes.annos} onSentAnnos={notes.clear} />
+          <Composer address={target.address} working={status === "working"} blocked={status === "blocked"} annos={notes.annos} onSentAnnos={notes.clear}
+            onSent={(text, busy) => {
+              setPending((p) => [...p, { id: `${Date.now()}`, text, at: Date.now(), working: busy }]);
+              setTimeout(() => list.current?.scrollTo({ top: Number.MAX_SAFE_INTEGER, behavior: "smooth" }), 50);
+            }} />
         </>
       )}
       {isSub && <div className="readonly">A sub-agent's conversation, read-only.</div>}

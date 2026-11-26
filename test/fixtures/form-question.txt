@@ -1,0 +1,19 @@
+● Two review comments need your decision, and the logging one changes all three libraries before they're released. Checking my notes first:
+
+  Called memorize
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+←  ☐ Log level  ☐ Cache  ☐ Refresh  ✔ Submit  →
+
+│ Review point 4: the client logs every request at INFO, even when nothing changes. How should
+│ the libraries log? Java, Go and Python would all change before the next release.
+
+❯ 1. INFO only for changes (Recommended)
+     changed=true stays at INFO; changed=false and its reason go to DEBUG. Nothing new at INFO while nothing
+     changes. The cost: unchanged requests only show with DEBUG on.
+  2. Keep INFO for every request
+     No change. Every request, changed or not, writes one INFO line in every service.
+  3. Type something.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  4. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel
