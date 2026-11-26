@@ -45,7 +45,7 @@ export function statusOf(t) {
 
 /** What the agent says it's doing now, if anything. */
 export function activityOf(t) {
-  return typeof t?.status === "object" ? (t.status.msg ?? null) : null;
+  return typeof t?.status === "object" ? (t.status?.msg ?? null) : null;
 }
 
 /** A session's name: its terminal's title (Claude Code sets it from the session's name), else its folder's last part. */

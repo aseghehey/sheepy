@@ -17,6 +17,7 @@ export class ErrorBoundary extends Component<{ children: ReactNode; label: strin
         <div className="crash-title">The {this.props.label} hit a problem</div>
         <pre className="output">{String(this.state.error?.stack ?? this.state.error)}</pre>
         <button className="link" onClick={() => this.setState({ error: null })}>Try again</button>
+        {this.props.label === "window" && <button className="link" onClick={() => window.location.reload()}>Reload</button>}
       </div>
     );
   }

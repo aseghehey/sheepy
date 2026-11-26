@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { isClaude, statusOf, sessionTitle, whereOf, windows, subagentRow } from "../src/lib/sessions.js";
+import { isClaude, statusOf, activityOf, sessionTitle, whereOf, windows, subagentRow } from "../src/lib/sessions.js";
 
 const term = (address, extra = {}) => ({
   address, state: "live", agent: "claude-code", title: "", cwd: "/home/me",
@@ -157,4 +157,14 @@ test("a move shows at once and is dropped once herdr-core has it", () => {
   assert.deepEqual(pendingMoves(ts, moves), { "h/t2": "B" });
   assert.deepEqual(pendingMoves(shown, moves), {}, "done once the picture shows it");
   assert.deepEqual(pendingMoves([], moves), {}, "a session that's gone");
+});
+
+test("a session that has just started (status still null) doesn't break the sidebar", () => {
+  const fresh = { address: "devdesk/t20", agent: "claude", status: null, labels: {}, foreground: { cwd: "/w" } };
+  assert.equal(activityOf(fresh), null);
+  assert.equal(activityOf({ status: { msg: "Reading files" } }), "Reading files");
+  assert.equal(activityOf({}), null);
+  assert.equal(activityOf(null), null);
+  assert.doesNotThrow(() => windows([fresh]));
+  assert.doesNotThrow(() => hosts([fresh], []));
 });
