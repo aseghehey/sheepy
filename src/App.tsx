@@ -91,7 +91,13 @@ export default function App() {
   const terminal = target ? (facts?.terminals ?? []).find((t) => t.address === target.address) ?? null : null;
 
   return (
-    <div className="app">
+    <div className={`app ${view.sidebar ? "" : "no-sidebar"}`}>
+      {/* The sidebar hidden (⌃⌘S): a button to bring it back, past the window's buttons. */}
+      {!view.sidebar && (
+        <button className="head-btn sidebar-show" title="Show sidebar (⌃⌘S)" aria-label="Show sidebar" onClick={() => setView({ sidebar: true })}>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="16" rx="2.5" /><path d="M9 4v16" /></svg>
+        </button>
+      )}
       {newer && (
         <div className="update-bar">
           A newer version of Sheepy is installed.
@@ -113,6 +119,8 @@ export default function App() {
         onClosed={(addresses) => setTarget((t) => (t && addresses.includes(t.address) ? null : t))}
         error={coreError}
         machines={machines}
+        hidden={!view.sidebar}
+        onHide={() => setView({ sidebar: false })}
       />
       </ErrorBoundary>
       <main className="main">
@@ -131,8 +139,8 @@ export default function App() {
           />
           </ErrorBoundary>
         ) : (
-          <div className="empty">
-            <div className="empty-body">Pick a session on the left, or start one with +.</div>
+          <div className="empty" data-tauri-drag-region>
+            <div className="empty-body">{view.sidebar ? "Pick a session on the left, or start one with +." : "Show the sidebar (⌃⌘S) to pick a session, or start one from ⌘K."}</div>
           </div>
         )}
       </main>

@@ -29,3 +29,13 @@ test("filtering: all words, titles starting with the query first", () => {
   assert.equal(filterCommands(list, "appearance dark")[0].id, "theme-dark");
   assert.deepEqual(filterCommands(list, "nothing like this"), []);
 });
+
+test("the palette hides the sidebar when it's shown, and shows it when it's hidden", () => {
+  const shown = commandList([], { sidebar: true, zoom: 1 }).find((c) => c.id === "sidebar");
+  assert.equal(shown.title, "Hide sidebar");
+  assert.deepEqual(shown.run, { kind: "view", change: { sidebar: false } });
+  assert.equal(shown.keys, "⌃⌘S");
+  const hidden = commandList([], { sidebar: false, zoom: 1 }).find((c) => c.id === "sidebar");
+  assert.equal(hidden.title, "Show sidebar");
+  assert.deepEqual(hidden.run, { kind: "view", change: { sidebar: true } });
+});

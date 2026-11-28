@@ -24,7 +24,7 @@ export const THEMES = [
   { id: "dark", label: "Dark" },
 ];
 
-export const DEFAULT_VIEW = { font: "system", width: "medium", zoom: 1, theme: "system" };
+export const DEFAULT_VIEW = { font: "system", width: "medium", zoom: 1, theme: "system", sidebar: true };
 
 /** A view from whatever was stored. */
 export function parseView(stored) {
@@ -36,7 +36,13 @@ export function parseView(stored) {
     width: WIDTHS.some((w) => w.id === v.width) ? v.width : DEFAULT_VIEW.width,
     zoom: ZOOMS.includes(v.zoom) ? v.zoom : DEFAULT_VIEW.zoom,
     theme: THEMES.some((t) => t.id === v.theme) ? v.theme : DEFAULT_VIEW.theme,
+    sidebar: typeof v.sidebar === "boolean" ? v.sidebar : DEFAULT_VIEW.sidebar,
   };
+}
+
+/** ⌃⌘S, the Mac's Show/Hide Sidebar: whether a key press is it. */
+export function isSidebarKey(e) {
+  return Boolean(e?.metaKey && e?.ctrlKey && !e?.altKey && !e?.shiftKey && String(e?.key ?? "").toLowerCase() === "s");
 }
 
 /** The CSS variables a view sets on the conversation. */

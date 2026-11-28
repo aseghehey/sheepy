@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { FONTS, WIDTHS, ZOOMS, THEMES, parseView, stepZoom, DEFAULT_VIEW } from "../lib/view.js";
+import { FONTS, WIDTHS, ZOOMS, THEMES, parseView, stepZoom, isSidebarKey, DEFAULT_VIEW } from "../lib/view.js";
 
 export type View = typeof DEFAULT_VIEW;
 
@@ -13,6 +13,7 @@ export function useView() {
   });
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
+      if (isSidebarKey(e)) { e.preventDefault(); setViewState((v) => save({ ...v, sidebar: !v.sidebar })); return; }
       if (!e.metaKey || e.altKey || e.ctrlKey) return;
       if (e.key === "=" || e.key === "+") { e.preventDefault(); setViewState((v) => save({ ...v, zoom: stepZoom(v.zoom, 1) })); }
       else if (e.key === "-") { e.preventDefault(); setViewState((v) => save({ ...v, zoom: stepZoom(v.zoom, -1) })); }

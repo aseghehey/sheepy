@@ -18,6 +18,7 @@ export function commandList(hosts, view) {
     { id: "logs", title: "Show logs", group: "Help", run: { kind: "logs" } },
     { id: "reload", title: "Reload window", group: "Help", keys: "⌘R", run: { kind: "reload" } },
     { id: "restart", title: "Restart Sheepy", group: "Help", run: { kind: "restart" } },
+    { id: "sidebar", title: view?.sidebar === false ? "Show sidebar" : "Hide sidebar", group: "View", keys: "⌃⌘S", run: { kind: "view", change: { sidebar: view?.sidebar === false } } },
     { id: "zoom-in", title: "Zoom in", group: "View", keys: "⌘+", run: { kind: "view", change: { zoom: stepZoom(view?.zoom ?? 1, 1) } } },
     { id: "zoom-out", title: "Zoom out", group: "View", keys: "⌘−", run: { kind: "view", change: { zoom: stepZoom(view?.zoom ?? 1, -1) } } },
     { id: "zoom-reset", title: "Actual size", group: "View", keys: "⌘0", run: { kind: "view", change: { zoom: 1 } } },

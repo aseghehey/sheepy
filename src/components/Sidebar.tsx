@@ -73,10 +73,11 @@ function SubAgents({ session, file, target, onSelect }: { session: Session; file
 
 interface Host { id: string; name: string; machine: string | null; status: string; groups: Win[] }
 
-export function Sidebar({ hosts, target, logs, onSelect, onRegroup, modelOf, onClosed, error, machines }: {
+export function Sidebar({ hosts, target, logs, onSelect, onRegroup, modelOf, onClosed, error, machines, hidden = false, onHide }: {
   hosts: Host[]; target: Target | null; logs: Record<string, string>; onSelect: (t: Target) => void;
   onRegroup: (addresses: string[], group: string) => Promise<void>;
   modelOf: (address: string) => string | null;
+  hidden?: boolean; onHide?: () => void;
   onClosed: (addresses: string[]) => void; error: string | null; machines: { name: string; state: string }[];
 }) {
   const [folded, toggle] = useFolded();
@@ -227,9 +228,16 @@ export function Sidebar({ hosts, target, logs, onSelect, onRegroup, modelOf, onC
   };
 
   return (
-    <aside className="sidebar">
+    // Hidden, it keeps its place in the tree (its palettes and shortcuts still
+    // work) and folds to nothing.
+    <aside className={`sidebar ${hidden ? "hidden" : ""}`} aria-hidden={hidden || undefined}>
       <div className="sidebar-head" data-tauri-drag-region>
         <span style={{ flex: 1 }} data-tauri-drag-region />
+        {onHide && (
+          <button className="head-btn" title="Hide sidebar (⌃⌘S)" aria-label="Hide sidebar" onClick={onHide}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="16" rx="2.5" /><path d="M9 4v16" /></svg>
+          </button>
+        )}
         <button className="head-btn" title="New session" onClick={() => setStarting({ machine: null, folder: "", group: "" })}>+</button>
         <button className="head-btn" title="Search conversations (⌘⇧F)" onClick={() => window.dispatchEvent(new KeyboardEvent("keydown", { key: "f", metaKey: true, shiftKey: true }))}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
